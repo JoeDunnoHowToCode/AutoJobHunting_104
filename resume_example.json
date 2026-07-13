@@ -1,0 +1,84 @@
+{
+  "basic_info": {
+    "name": "John Doe",
+    "phone": "0912345678",
+    "email": "johndoe@example.com",
+    "expected_salary_monthly": 60000,
+    "accept_negotiable_salary": true,
+    "desired_title": "Frontend Developer, Backend Engineer, 全端工程師, 軟體工程師",
+    "tags": [
+      "React",
+      "Node.js",
+      "TypeScript",
+      "AWS"
+    ]
+  },
+  "summary": "擁有 3 年以上 Web 全端開發經驗，專精於 React 生態系與 Node.js 微服務架構。能獨立負責從需求分析、系統設計到 CI/CD 部署的完整開發流程。對技術有高度熱忱，熟悉敏捷開發流程。",
+  "core_skills": [
+    "前端技術: React, Vue, TypeScript, Next.js, Tailwind CSS",
+    "後端技術: Node.js, Express, NestJS, Python",
+    "資料庫: PostgreSQL, MongoDB, Redis",
+    "雲端與運維: AWS (EC2, S3, RDS), Docker, GitHub Actions",
+    "軟實力: 跨部門溝通協調, 系統架構設計, 效能優化"
+  ],
+  "education": [
+    {
+      "school": "國立臺灣大學",
+      "major": "資訊工程學系",
+      "degree": "學士學位",
+      "duration": "2016/9–2020/6",
+      "details": [
+        "多次參與系上開源專案與黑客松",
+        "畢業專題：基於機器學習的股市預測系統開發"
+      ]
+    }
+  ],
+  "work_experience": [
+    {
+      "title": "全端軟體工程師",
+      "company": "科技創新網路股份有限公司",
+      "location": "台北市信義區",
+      "duration": "2021/7–至今",
+      "responsibilities": [
+        "主導公司核心電商平台的前後端開發，提升系統整體效能達 30%",
+        "設計並實作高可用性的 RESTful API 供手機 APP 與前端 Web 端呼叫",
+        "導入 GitHub Actions 建立 CI/CD 自動化流程，縮短部署時間 50%",
+        "帶領 2 名初階工程師進行 Code Review 與技術指導"
+      ]
+    },
+    {
+      "title": "前端實習生",
+      "company": "數位科技新創公司",
+      "location": "台北市大安區",
+      "duration": "2020/7–2021/6（1年）",
+      "responsibilities": [
+        "協助開發與維護 React 內部後台管理系統",
+        "使用 Redux 進行狀態管理，並與後端工程師協作串接 API",
+        "撰寫 Unit Test 確保功能穩定性"
+      ]
+    }
+  ],
+  "languages": [
+    "英文：聽/中等、說/中等、讀/精通、寫/精通",
+    "日文：聽/略懂、說/略懂、讀/略懂、寫/略懂"
+  ],
+  "certifications": [
+    "TOEIC 750",
+    "AWS Certified Developer – Associate"
+  ],
+  "job_preferences": {
+    "type": "全職",
+    "shift": "日班",
+    "start_date": "一個月內",
+    "locations": "台北市、新北市、遠端",
+    "remote": "可接受",
+    "roles": "全端工程師、前端工程師、後端工程師",
+    "industries": "軟體、網路、電子商務、新創科技"
+  },
+  "work_content_preferences": [
+    "微服務系統架構設計與開發",
+    "React/Next.js 前端效能優化",
+    "雲端基礎架構建置",
+    "新技術研究與內部技術分享"
+  ]
+}

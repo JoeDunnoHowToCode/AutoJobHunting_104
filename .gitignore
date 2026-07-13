@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+
+# Environment variables & Secrets (CRITICAL)
+.env
+auth_state.json
+settings.json
+
+# Personal data
+resume.json
+resume.txt
+applyRecord.json
+
+# Logs & Debugging
+*.log
+jd_*.txt
+body_*.txt
+test-*.ts
+test-*.js
+*.png
+
+# OS files
+.DS_Store

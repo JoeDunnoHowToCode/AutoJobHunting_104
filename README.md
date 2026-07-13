@@ -1,0 +1,99 @@
+# 🚀 Auto-Job-Hunter (全自動 AI 履歷投遞引擎)
+
+這是一個以 Node.js、Playwright 與 Gemini AI 為核心開發的「全自動化求職助理」。
+目前系統已支援 **104 人力銀行**，未來將以微服務外掛架構陸續支援 CakeResume、Yourator、1111 等各大求職平台！
+系統會根據您的個人履歷 (`resume.json`)，自動在平台上搜尋職缺、透過 Gemini 篩選適合度、自動撰寫客製化自薦信，並直接完成應徵。您甚至能透過 Telegram 接收即時投遞戰報！以及寫入 **Notion 資料庫** 歸檔。
+
+---
+
+## 🛠️ 核心特色與技術架構
+
+* **高效率尋缺引擎**：自動過濾「過去 7 天內更新」的最新職缺，從最新日期開始掃描，確保每天都搶第一時間投遞新職缺。
+* **智慧關鍵字輪替**：從您的履歷中提取所有期望職稱隨機尋找，若同一個職稱連續遇到 10 個已投遞/已評估過的職缺，將會聰明地自動切換下一個關鍵字。
+* **AI 智慧評估與過濾**：Google Gemini 負責 AI 契合度評估（0-100 分），並會根據您的期望薪資、黑名單關鍵字進行嚴格的自動過濾。
+* **雙軌即時回報系統**：
+    * 投遞進度與 AI 評估分數即時推播至 **Telegram**。
+    * 歷史紀錄完整歸檔至 **Notion Database**。
+* **本地持久化紀錄**：確保所有略過、投遞過的紀錄存在 `applyRecord.json`，系統永遠不會重複投遞同一間公司。
+* **微服務外掛架構**：程式已重構為模組化架構（`src/platforms/`），只需擴充模組即可輕易支援各種新求職網站，極度適合未來整合進大型履歷平台或 SaaS 後端！
+
+---
+
+## 📂 專案設定與使用指南
+
+為了確保隱私安全與設定彈性，本專案將「機密資料」與「一般設定」完全分離：
+
+### 第一步：設定隱私金鑰 (`.env`)
+專案中包含了您的各式金鑰，**請複製 `.env.example` 並重新命名為 `.env`**。
+由於 `.gitignore` 已將其排除，您的密碼絕對不會外洩到 GitHub。
+```env
+# Google Gemini API 金鑰
+GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+
+# Telegram 通知 Bot Token (由 @BotFather 取得)
+TELEGRAM_BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
+TELEGRAM_CHAT_ID=
+
+# Notion 紀錄整合
+NOTION_API_TOKEN=YOUR_NOTION_INTEGRATION_TOKEN
+NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
+```
+> 💡 **小撇步**：`TELEGRAM_CHAT_ID` 您可以留空。系統啟動時，只要您先傳送隨便一句話給您的 Telegram 機器人，系統就會自動捕捉您的 Chat ID 並寫回 `.env` 永久記住！
+
+### 第二步：調整運作參數 (`settings.json`)
+這裡存放與隱私無關的一般設定，您可以直接修改此檔案（您可以參考 `settings_example.json`）：
+```json
+{
+  "scoreThreshold": 65,            // 契合度大於等於此分數才會自動投遞
+  "applyLimitPerRun": 30,          // 單次腳本執行的最大投遞數量上限
+  "headless": true,                // true=背景隱藏執行, false=會跳出瀏覽器畫面
+  "blacklistKeywords": ["保險", "博弈"]  // 遇到這些關鍵字直接略過不看
+}
+```
+
+### 第三步：填寫個人履歷 (`resume.json`)
+系統的「搜尋關鍵字」與「AI 評分標準」全靠這份檔案。
+1. 請複製專案內的 `resume_example.json` 並將其重新命名為 `resume.json`。
+2. 將裡面的 John Doe 假資料替換為您真實的經歷、技能、期望薪資 (`expected_salary_monthly`)。
+3. 最重要的是設定您的期望職稱 (`desired_title`)，系統會自動把它當作 104 搜尋引擎的關鍵字！
+
+### 第四步：手動登入 104 並儲存 Session
+因為 104 登入有圖形驗證碼，您只需要手動登入一次：
+1. 終端機執行：`npm run login`
+2. 此步驟會啟動瀏覽器為您開啟 104 首頁。請在視窗內手動完成 104 的登入程序（包含圖片驗證碼）。登入完成後，回到終端機按下 `Enter`，系統會將 104 的 Session 儲存至本地的 `auth_state.json` 檔案中，之後就會全自動免登入。
+
+---
+
+## 🚀 執行與部署
+
+### ⚡ 立即執行自動投遞
+```bash
+npm start
+```
+系統將會：
+1. 讀取您的 `resume.json` 中的 `desired_title` 開始搜尋最新職缺。
+2. 逐一比對 JD，透過 Gemini 給出評分。
+3. 分數達標且通過薪資/黑名單過濾後自動投遞。
+4. 將結果發送至 Telegram 並記錄至 Notion。
+
+### ⏰ 排程自動化
+強烈建議將指令加入系統排程（如 `crontab`）中，讓機器人每天定時為您搜尋並投遞新職缺。
+```bash
+# 每天早上 9 點自動執行一次
+0 9 * * * cd /您的路徑/auto-job-hunter && npm run start >> /tmp/auto-job.log 2>&1
+```
+
+---
+
+## 🚀 取得專案與安裝
+```bash
+git clone https://github.com/您的帳號/auto-job-hunter.git
+cd auto-job-hunter
+npm install
+```
+
+## 🛡️ 反爬蟲防護與安全機制
+
+* **.gitignore 嚴密保護**：您的履歷 (`resume.json`)、投遞軌跡 (`applyRecord.json`) 以及密碼金鑰 (`.env`) 皆不會被上傳。
+* **真人行為模擬**：每次爬取與點擊皆有隨機秒數延遲，並搭載 `stealth` 技術規避 Cloudflare 機器人偵測。
+* **防重複投遞**：系統紀錄了完整的歷史檔案，一旦看過就不會再浪費時間重新分析，效率極高。

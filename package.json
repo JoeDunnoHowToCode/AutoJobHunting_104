@@ -1,0 +1,25 @@
+{
+  "name": "auto-job-hunter",
+  "version": "1.0.0",
+  "description": "Automated 104 job bank application assistant using Playwright and Gemini",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "ts-node src/index.ts",
+    "login": "ts-node src/login.ts",
+    "test-gemini": "ts-node src/test-gemini.ts"
+  },
+  "dependencies": {
+    "@google/genai": "latest",
+    "@notionhq/client": "^5.22.0",
+    "dotenv": "^16.4.5",
+    "playwright": "^1.44.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}

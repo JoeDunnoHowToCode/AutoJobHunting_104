@@ -1,0 +1,6 @@
+{
+  "scoreThreshold": 65,
+  "applyLimitPerRun": 30,
+  "headless": true,
+  "blacklistKeywords": ["保險"]
+}
