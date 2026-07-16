@@ -17,6 +17,7 @@ export interface Config {
   telegramChatId: string;
   notionApiToken: string;
   notionDatabaseId: string;
+  areas: string[];
 }
 
 const rootDir = path.resolve(__dirname, '..');
@@ -25,7 +26,9 @@ let settings: any = {};
 try {
   const fs = require('fs');
   if (fs.existsSync(settingsPath)) {
-    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    const raw = fs.readFileSync(settingsPath, 'utf8');
+    const jsonStr = raw.replace(/\\"|"(?:\\"|[^"])*"|(\/\/.*|\/\*[\s\S]*?\*\/)/g, (m, g) => g ? "" : m);
+    settings = JSON.parse(jsonStr);
   }
 } catch (e) {
   console.warn('Failed to load settings.json, using defaults.');
@@ -43,5 +46,6 @@ export const config: Config = {
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
   telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
   notionApiToken: process.env.NOTION_API_TOKEN || '',
-  notionDatabaseId: process.env.NOTION_DATABASE_ID || ''
+  notionDatabaseId: process.env.NOTION_DATABASE_ID || '',
+  areas: settings.areas || []
 };

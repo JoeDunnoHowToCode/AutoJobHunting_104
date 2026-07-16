@@ -1,12 +1,48 @@
 import { Page } from 'playwright';
 import { JobPlatform, ScrapedJob } from './base';
+import { config } from '../config';
+
+const AREA_MAP: Record<string, string> = {
+  '台北市': '6001001000',
+  '新北市': '6001002000',
+  '基隆市': '6001003000',
+  '桃園市': '6001004000',
+  '新竹縣': '6001005000',
+  '新竹市': '6001006000',
+  '苗栗縣': '6001007000',
+  '台中市': '6001008000',
+  '彰化縣': '6001009000',
+  '南投縣': '6001010000',
+  '雲林縣': '6001011000',
+  '嘉義縣': '6001012000',
+  '嘉義市': '6001013000',
+  '台南市': '6001014000',
+  '高雄市': '6001015000',
+  '屏東縣': '6001016000',
+  '宜蘭縣': '6001017000',
+  '花蓮縣': '6001018000',
+  '台東縣': '6001019000',
+  '澎湖縣': '6001020000',
+  '金門縣': '6001021000',
+  '連江縣': '6001022000'
+};
 
 export class Platform104 extends JobPlatform {
   public readonly platformName = '104';
 
   public async searchJobs(page: Page, keyword: string, pageNum: number = 1): Promise<ScrapedJob[]> {
     console.log(`Searching for jobs on 104 with keyword: "${keyword}", Page: ${pageNum}...`);
-    const searchUrl = `https://www.104.com.tw/jobs/search/?clean=1&ro=0&keyword=${encodeURIComponent(keyword)}&isnew=7&order=11&asc=0&page=${pageNum}`;
+    let searchUrl = `https://www.104.com.tw/jobs/search/?clean=1&ro=0&keyword=${encodeURIComponent(keyword)}&isnew=7&order=11&asc=0&page=${pageNum}`;
+    
+    if (config.areas && config.areas.length > 0) {
+      const areaCodes = config.areas.map(areaName => AREA_MAP[areaName] || '').filter(code => code !== '');
+      if (areaCodes.length > 0) {
+        searchUrl += `&area=${areaCodes.join(',')}`;
+        console.log(`[Search] Applied location filter: ${config.areas.join(', ')} -> ${areaCodes.join(',')}`);
+      } else {
+        console.warn(`[Warning] No valid area codes found for configured areas: ${config.areas.join(', ')}`);
+      }
+    }
     
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
     
