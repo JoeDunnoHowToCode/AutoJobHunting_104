@@ -27,7 +27,7 @@ try {
   const fs = require('fs');
   if (fs.existsSync(settingsPath)) {
     const raw = fs.readFileSync(settingsPath, 'utf8');
-    const jsonStr = raw.replace(/\\"|"(?:\\"|[^"])*"|(\/\/.*|\/\*[\s\S]*?\*\/)/g, (m, g) => g ? "" : m);
+    const jsonStr = raw.replace(/\\"|"(?:\\"|[^"])*"|(\/\/.*|\/\*[\s\S]*?\*\/)/g, (m: string, g: string) => g ? "" : m);
     settings = JSON.parse(jsonStr);
   }
 } catch (e) {
