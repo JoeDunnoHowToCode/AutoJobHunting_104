@@ -149,9 +149,7 @@ export class Platform104 extends JobPlatform {
     for (const selector of selectors) {
       const element = page.locator(selector).first();
       if (await element.count() > 0) {
-        jdText += '\
-' + (await element.innerText()).trim() + '\
-';
+        jdText += '\n' + (await element.innerText()).trim() + '\n';
       }
     }
 
@@ -159,10 +157,10 @@ export class Platform104 extends JobPlatform {
       jdText = await page.locator('body').innerText();
     }
 
-    jdText = jdText.replace(/\\s+/g, ' ').substring(0, 3000);
+    jdText = jdText.replace(/\s+/g, ' ').substring(0, 3000);
 
     // Extract location using 104 specific regex
-    const locMatch = jdText.match(/(?:上班地點|工作地點)[：\\s]*([\\s\\S]*?)(?=管理責任|出差外派|上班時段|休假制度|可上班日|$)/);
+    const locMatch = jdText.match(/(?:上班地點|工作地點)[：\s]*([\s\S]*?)(?=管理責任|出差外派|上班時段|休假制度|可上班日|$)/);
     const location = locMatch ? locMatch[1].trim() : '未知';
 
     return { jdText, location };
