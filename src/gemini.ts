@@ -86,7 +86,7 @@ ${jobDescription}
     while (retries > 0) {
       try {
         const response = await this.ai.models.generateContent({
-          model: 'gemini-3.1-flash-lite',
+          model: 'gemini-flash-lite-latest',
           contents: prompt,
         });
 
