@@ -97,7 +97,7 @@ async function main() {
 
         consecutiveSkipped = 0;
         processedCount++;
-        console.log(`\n[處理中 ${processedCount}/${config.applyLimitPerRun}] 職缺: "${job.title}" - ${job.company} (${job.jobId})`);
+        console.log(`\n[目前成功投遞進度: ${appliedCount}/${config.applyLimitPerRun}] (累積已檢查 ${processedCount} 個職缺) 正在評估: "${job.title}" - ${job.company} (${job.jobId})`);
         
         try {
           const isBlacklisted = config.blacklistKeywords.some(keyword => 
