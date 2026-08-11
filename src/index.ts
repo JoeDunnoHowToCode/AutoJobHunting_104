@@ -187,7 +187,7 @@ async function main() {
           console.log(`-> 理由: ${formattedReason}`);
 
           if (evaluation.shouldApply) {
-            console.log(`[契合度合格] 分數大於等於 ${config.scoreThreshold}。開始為該職缺生成客製化自薦信...`);
+            console.log(`[契合度合格] 分數 (${evaluation.score}) 大於等於門檻 (${config.scoreThreshold}) 且決策為 ${evaluation.decision}。開始生成客製化自薦信...`);
             
             const customContent = await gemini.generateCustomizedContent(job.title, job.company, jd, {
               strengths: evaluation.strengths,
@@ -239,7 +239,10 @@ async function main() {
               processedInThisRun.push(record);
             }
           } else {
-            console.log(`[不合適略過] 分數未達門檻 ${config.scoreThreshold}。`);
+            const skipReason = evaluation.score < config.scoreThreshold
+              ? `分數 (${evaluation.score}) 未達門檻 (${config.scoreThreshold})`
+              : `必備條件嚴重缺失 (決策: ${evaluation.decision})`;
+            console.log(`[不合適略過] ${skipReason}。`);
             const record: JobRecord = {
               jobId: job.jobId,
               title: job.title,

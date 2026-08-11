@@ -262,7 +262,7 @@ ${sanitizedJd}
         data.breakdown.bonusMatch;
 
       const decision = this.computeDecision(totalScore, data.mustHaveMatches);
-      const shouldApply = decision === 'APPLY';
+      const shouldApply = totalScore >= config.scoreThreshold && decision !== 'SKIP';
 
       return {
         score: totalScore,
