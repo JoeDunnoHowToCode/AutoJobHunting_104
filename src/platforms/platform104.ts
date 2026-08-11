@@ -157,11 +157,30 @@ export class Platform104 extends JobPlatform {
       jdText = await page.locator('body').innerText();
     }
 
-    jdText = jdText.replace(/\s+/g, ' ').substring(0, 3000);
+    let location = '未知';
+    const locSpan = page.locator('.job-address span').first();
+    if (await locSpan.count() > 0) {
+      location = (await locSpan.innerText()).trim();
+    }
 
-    // Extract location using 104 specific regex
-    const locMatch = jdText.match(/(?:上班地點|工作地點)[：\s]*([\s\S]*?)(?=管理責任|出差外派|上班時段|休假制度|可上班日|$)/);
-    const location = locMatch ? locMatch[1].trim() : '未知';
+    if (!location || location === '未知') {
+      const locDiv = page.locator('.job-address').first();
+      if (await locDiv.count() > 0) {
+        // Evaluate direct text content of span/children inside .job-address to avoid attribute text
+        const text = await locDiv.evaluate(el => {
+          const span = el.querySelector('span');
+          return span ? span.textContent : el.textContent;
+        });
+        if (text) location = text.trim();
+      }
+    }
+
+    if (!location || location === '未知') {
+      const locMatch = jdText.match(/(?:上班地點|工作地點)[：\s]*([\s\S]*?)(?=管理責任|出差外派|上班時段|休假制度|可上班日|$)/);
+      if (locMatch && locMatch[1].trim().length < 100) {
+        location = locMatch[1].trim();
+      }
+    }
 
     return { jdText, location };
   }
