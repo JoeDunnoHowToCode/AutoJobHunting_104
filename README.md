@@ -28,18 +28,20 @@
 專案中包含了您的各式金鑰，**請複製 `.env.example` 並重新命名為 `.env`**。
 由於 `.gitignore` 已將其排除，您的密碼絕對不會外洩到 GitHub。
 ```env
-# Google Gemini API 金鑰
+# Google Gemini API 金鑰 (必填)
 GEMINI_API_KEY=YOUR_GEMINI_API_KEY
 
-# Telegram 通知 Bot Token (由 @BotFather 取得)
+# Telegram 通知推播 (可選，若未設定會自動跳過不影響運作)
 TELEGRAM_BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID=
 
-# Notion 紀錄整合
+# Notion 履歷歸檔整合 (可選，若未設定會自動跳過不影響運作)
 NOTION_API_TOKEN=YOUR_NOTION_INTEGRATION_TOKEN
 NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
 ```
-> 💡 **小撇步**：`TELEGRAM_CHAT_ID` 您可以留空。系統啟動時，只要您先傳送隨便一句話給您的 Telegram 機器人，系統就會自動捕捉您的 Chat ID 並寫回 `.env` 永久記住！
+> 💡 **小貼士（可選功能）**：
+> - **Telegram 與 Notion 為可選服務**：若您暫時不需要推播或 Notion 歸檔，只需在 `.env` 中將其留空即可。系統會自動切換至靜默模式，所有投遞紀錄皆會完整儲存於本地 `applyRecord.json`。
+> - `TELEGRAM_CHAT_ID` 您可以留空。系統啟動時，只要您先傳送隨便一句話給您的 Telegram 機器人，系統就會自動捕捉您的 Chat ID 並寫回 `.env` 永久記住！
 
 ### 第二步：調整運作參數 (`settings.json`)
 這裡存放與隱私無關的一般設定，您可以直接修改此檔案（您可以參考 `settings_example.json`）：
@@ -67,6 +69,23 @@ NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
 因為 104 登入有圖形驗證碼，您只需要手動登入一次：
 1. 終端機執行：`npm run login`
 2. 此步驟會啟動瀏覽器為您開啟 104 首頁。請在視窗內手動完成 104 的登入程序（包含圖片驗證碼）。登入完成後，回到終端機按下 `Enter`，系統會將 104 的 Session 儲存至本地的 `auth_state.json` 檔案中，之後就會全自動免登入。
+
+---
+
+## 🌟 新手首次使用流暢度指南 (First-Time Tips)
+
+1. **快速驗證 API 金鑰 (無痛測試)**：
+   在執行完整瀏覽器流程前，可先執行以下指令：
+   ```bash
+   npm run test-gemini
+   ```
+   系統會在 5 秒內測試 Gemini 金鑰連線、AI 評估與自薦信生成，確認 API 設定 100% 正確。
+
+2. **首次執行建議啟用有頭模式 (`headless: false`)**：
+   第一次執行 `npm start` 時，建議在 `settings.json` 中設定 `"headless": false`。您可以直觀看到瀏覽器自動搜尋、捲動頁面、評估與填寫自薦信的全過程，確認一切無誤後再改回 `true` 進行背景隱藏執行。
+
+3. **登入憑證有效性**：
+   手動登入 (`npm run login`) 生成的 `auth_state.json` 憑證通常可維持數週。若系統日誌提示 `Session 已過期`，只需重新執行一次 `npm run login` 即可快速完成更新。
 
 ---
 
