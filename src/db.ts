@@ -110,6 +110,13 @@ export class JobDatabase {
         if (record) {
           // Allow retry if it failed previously
           if (record.status === 'failed') return false;
+          // Allow re-evaluation of skipped jobs after 14 days
+          if (record.status === 'skipped') {
+            const recordDate = new Date(date);
+            const now = new Date();
+            const daysSince = Math.floor((now.getTime() - recordDate.getTime()) / (1000 * 60 * 60 * 24));
+            if (daysSince >= 14) return false;
+          }
           return true;
         }
       }

@@ -114,8 +114,8 @@ async function main() {
         if (db.hasBeenProcessed(job.jobId)) {
           console.log(`[已略過] 職缺已在歷史紀錄中: "${job.title}" - ${job.company} (${job.jobId})`);
           consecutiveSkipped++;
-          if (consecutiveSkipped >= 10) {
-            console.log(`連續遇到 10 個已處理過的職缺，提早結束並切換下一個關鍵字。`);
+          if (consecutiveSkipped >= 25 && pageNum >= 2) {
+            console.log(`連續遇到 25 個已處理過的職缺（已搜尋至第 ${pageNum} 頁），提早結束並切換下一個關鍵字。`);
             shouldSwitchKeyword = true;
             break;
           }
@@ -127,9 +127,11 @@ async function main() {
         console.log(`\n[目前成功投遞進度: ${appliedCount}/${config.applyLimitPerRun}] (累積已檢查 ${processedCount} 個職缺) 正在評估: "${job.title}" - ${job.company} (${job.jobId})`);
         
         try {
-          const isBlacklisted = config.blacklistKeywords.some(keyword => 
-            keyword.trim() !== '' && (job.company.includes(keyword) || job.title.includes(keyword))
-          );
+          const isBlacklisted = config.blacklistKeywords.some(bk => {
+            const trimmed = bk.trim();
+            if (trimmed.length < 2) return false;
+            return job.company.includes(trimmed) || job.title.includes(trimmed);
+          });
           if (isBlacklisted) {
             console.log(`[黑名單略過] 公司或職缺包含黑名單關鍵字: "${job.title}" - ${job.company}`);
             const record: JobRecord = {
@@ -152,12 +154,15 @@ async function main() {
           if (isNegotiable && !acceptNegotiable) {
             salaryPasses = false;
           } else if (!isNegotiable && expectedSalary > 0) {
-            const salaryMatch = jd.match(/月薪\s*(\d{1,3}(?:,\d{3})*)/);
-            if (salaryMatch) {
-              const jdSalary = parseInt(salaryMatch[1].replace(/,/g, ''), 10);
-              if (jdSalary < expectedSalary) {
+            const salaryRangeMatch = jd.match(/月薪\s*(\d{1,3}(?:,\d{3})*)(?:\s*(?:~|～|至|-)\s*(\d{1,3}(?:,\d{3})*))?/);
+            if (salaryRangeMatch) {
+              const salaryLow = parseInt(salaryRangeMatch[1].replace(/,/g, ''), 10);
+              const salaryHigh = salaryRangeMatch[2]
+                ? parseInt(salaryRangeMatch[2].replace(/,/g, ''), 10)
+                : salaryLow;
+              if (salaryHigh < expectedSalary) {
                 salaryPasses = false;
-                console.log(`[薪資略過] JD 薪資 ${jdSalary} 低於期望薪資 ${expectedSalary}。`);
+                console.log(`[薪資略過] JD 薪資區間 ${salaryLow}~${salaryHigh} 上限低於期望薪資 ${expectedSalary}。`);
               }
             }
           }

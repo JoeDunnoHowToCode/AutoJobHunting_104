@@ -34,7 +34,7 @@ export class Platform104 extends JobPlatform {
 
   public async searchJobs(page: Page, keyword: string, pageNum: number = 1): Promise<ScrapedJob[]> {
     console.log(`Searching for jobs on 104 with keyword: "${keyword}", Page: ${pageNum}...`);
-    let searchUrl = `https://www.104.com.tw/jobs/search/?clean=1&ro=0&keyword=${encodeURIComponent(keyword)}&isnew=7&order=11&asc=0&page=${pageNum}`;
+    let searchUrl = `https://www.104.com.tw/jobs/search/?clean=1&ro=0&keyword=${encodeURIComponent(keyword)}&isnew=7&order=12&asc=0&page=${pageNum}`;
     
     if (config.areas && config.areas.length > 0) {
       const areaCodes = config.areas.map(areaName => AREA_MAP[areaName] || '').filter(code => code !== '');
@@ -62,7 +62,7 @@ export class Platform104 extends JobPlatform {
     }
 
     const jobItems: ScrapedJob[] = [];
-    const jobLinks = await page.locator('a').all();
+    const jobLinks = await page.locator('a[href*="/job/"]').all();
     const processedIds = new Set<string>();
 
     console.log(`Analyzing ${jobLinks.length} total links to find job cards...`);
