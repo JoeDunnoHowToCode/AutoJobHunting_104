@@ -177,13 +177,18 @@ async function main() {
 
           const evaluation = await gemini.evaluateJob(job.title, job.company, jd);
           const formattedReason = evaluation.reason.replace(/(\\d+\\.\\s)/g, '\\n$1').trim();
-          console.log(`-> 評估分數: ${evaluation.score} 分`);
+          console.log(`-> 評估分數: ${evaluation.score} 分 (技能:${evaluation.breakdown?.skillMatch ?? '-'} 經驗:${evaluation.breakdown?.experienceMatch ?? '-'} 領域:${evaluation.breakdown?.domainMatch ?? '-'} 學歷:${evaluation.breakdown?.educationMatch ?? '-'} 加分:${evaluation.breakdown?.bonusMatch ?? '-'})`);
+          console.log(`-> 決策: ${evaluation.decision || 'N/A'} (信心度: ${evaluation.confidence?.toFixed(2) || 'N/A'})`);
           console.log(`-> 理由: ${formattedReason}`);
 
           if (evaluation.shouldApply) {
             console.log(`[契合度合格] 分數大於等於 ${config.scoreThreshold}。開始為該職缺生成客製化自薦信...`);
             
-            const customContent = await gemini.generateCustomizedContent(job.title, job.company, jd);
+            const customContent = await gemini.generateCustomizedContent(job.title, job.company, jd, {
+              strengths: evaluation.strengths,
+              gaps: evaluation.gaps,
+              decision: evaluation.decision,
+            });
             console.log(`自薦信生成完畢。內容長度: ${customContent.coverLetter.length} 字。`);
 
             const success = await platform.applyToJob(job.jobId, customContent.coverLetter);
