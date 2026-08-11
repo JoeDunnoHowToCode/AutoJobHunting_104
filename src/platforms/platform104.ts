@@ -166,6 +166,32 @@ export class Platform104 extends JobPlatform {
     return { jdText, location };
   }
 
+  public async verifyLogin(): Promise<boolean> {
+    console.log('正在驗證 104 登入 Session 是否有效...');
+    try {
+      const page = await this.getApplyPage();
+      await page.goto('https://pda.104.com.tw/my104/index', { waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(3000);
+
+      const currentUrl = page.url();
+      const bodyText = await page.locator('body').innerText();
+
+      await page.close();
+
+      if (currentUrl.includes('signin.104.com.tw') || currentUrl.includes('login.104.com.tw')) {
+        return false;
+      }
+      if (bodyText.includes('登入/註冊') || bodyText.includes('Log in now') || bodyText.includes('Not a member yet')) {
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      console.error('驗證 104 登入 Session 時發生例外:', err);
+      return false;
+    }
+  }
+
   public async applyToJob(jobId: string, coverLetter: string): Promise<boolean> {
     console.log(`Opening application page in authenticated context for jobId: ${jobId}...`);
     const page = await this.getApplyPage();
@@ -205,6 +231,21 @@ export class Platform104 extends JobPlatform {
       } else {
         console.log('No new tab opened. Operating on the page modal. Waiting 4 seconds...');
         await page.waitForTimeout(4000);
+      }
+
+      // Check if targetPage is showing a login modal/page instead of application form
+      const bodyText = await targetPage.locator('body').innerText();
+      if (
+        targetPage.url().includes('signin.104.com.tw') ||
+        targetPage.url().includes('login.104.com.tw') ||
+        bodyText.includes('Log in to 104') ||
+        bodyText.includes('登入/註冊') ||
+        bodyText.includes('Not a member yet')
+      ) {
+        console.error('[重大錯誤] 偵測到 104 登入狀態已過期 (出現登入畫面)！');
+        if (popupOpened && !targetPage.isClosed()) await targetPage.close();
+        await page.close();
+        throw new Error('SESSION_EXPIRED');
       }
 
       const checkboxes = await targetPage.locator('input[type="checkbox"]').all();
@@ -256,9 +297,9 @@ export class Platform104 extends JobPlatform {
       const successIndicators = ['應徵完成', '成功', '您已應徵', '送出成功', '已應徵'];
       let isSuccess = false;
       
-      const bodyText = await targetPage.locator('body').innerText();
+      const resultText = await targetPage.locator('body').innerText();
       for (const indicator of successIndicators) {
-        if (bodyText.includes(indicator)) {
+        if (resultText.includes(indicator)) {
           isSuccess = true;
           break;
         }
@@ -275,7 +316,10 @@ export class Platform104 extends JobPlatform {
       await page.close();
       return isSuccess;
 
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.message === 'SESSION_EXPIRED') {
+        throw err;
+      }
       console.error('Error during job application:', err);
       if (popupOpened && !targetPage.isClosed()) {
         await targetPage.close();

@@ -66,15 +66,6 @@
     "TOEIC 750",
     "AWS Certified Developer – Associate"
   ],
-  "job_preferences": {
-    "type": "全職",
-    "shift": "日班",
-    "start_date": "一個月內",
-    "locations": "台北市、新北市、遠端",
-    "remote": "可接受",
-    "roles": "全端工程師、前端工程師、後端工程師",
-    "industries": "軟體、網路、電子商務、新創科技"
-  },
   "work_content_preferences": [
     "微服務系統架構設計與開發",
     "React/Next.js 前端效能優化",

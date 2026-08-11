@@ -20,26 +20,41 @@ async function main() {
   console.log('104 人力銀行 自動化求職投遞系統');
   console.log('==================================================');
   console.log('執行時間:', new Date().toLocaleString());
-  let searchKeywords: string[] = ['全端工程師']; // Default fallback
+  let searchKeywords: string[] = [];
+  let expectedSalary = 0;
+  let acceptNegotiable = true;
+
+  if (!fs.existsSync(config.resumePath)) {
+    console.error(`[重大錯誤] 找不到履歷檔案: ${config.resumePath}`);
+    process.exit(1);
+  }
+
   try {
     const resumeJson = JSON.parse(fs.readFileSync(config.resumePath, 'utf8'));
+    expectedSalary = resumeJson.basic_info?.expected_salary_monthly || 0;
+    acceptNegotiable = resumeJson.basic_info?.accept_negotiable_salary ?? true;
     const desiredTitle = resumeJson.basic_info?.desired_title || '';
     if (desiredTitle) {
       searchKeywords = desiredTitle.split(/[,、]/).map((k: string) => k.trim()).filter((k: string) => k);
       searchKeywords = searchKeywords.sort(() => Math.random() - 0.5);
     }
   } catch (err) {
-    console.warn(`[警告] 無法讀取或解析 ${config.resumePath} 的 desired_title，將使用預設關鍵字。`);
+    console.error(`[重大錯誤] 解析 ${config.resumePath} 失敗:`, err);
+    process.exit(1);
+  }
+
+  if (searchKeywords.length === 0) {
+    console.error(`\n==================================================`);
+    console.error(`[重大錯誤] 在 ${config.resumePath} 的 basic_info.desired_title 中未設定任何搜尋職稱關鍵字！`);
+    console.error(`請先編輯 ${config.resumePath} 並填寫 desired_title (例: "AI工程師, 軟體工程師") 再執行。`);
+    console.error(`==================================================\n`);
+    process.exit(1);
   }
 
   console.log('搜尋關鍵字:', searchKeywords.join(', '));
   console.log('契合度門檻分數:', config.scoreThreshold);
   console.log('單次最多投遞數:', config.applyLimitPerRun);
   console.log('==================================================\n');
-
-  if (!fs.existsSync(config.resumePath)) {
-    console.warn(`[提示] 找不到履歷檔案 ${config.resumePath}`);
-  }
 
   if (!fs.existsSync(config.authStatePath)) {
     console.error(`[錯誤] 找不到登入 Session 檔案: ${config.authStatePath}`);
@@ -56,6 +71,18 @@ async function main() {
 
   try {
     for (const platform of platforms) {
+      console.log(`\n=== 開始驗證平台登入狀態: ${platform.platformName} ===`);
+      const isLoggedIn = await platform.verifyLogin();
+      if (!isLoggedIn) {
+        const errorMsg = `[重大錯誤] ${platform.platformName} 登入 Session 已過期或無效！\n程式已自動終止投遞。請在終端機執行 "npm run login" 重新完成驗證。`;
+        console.error(`\n==================================================`);
+        console.error(errorMsg);
+        console.error(`==================================================\n`);
+        await sendTelegramMessage(`🚨 <b>[自動投遞系統終止]</b>\n${platform.platformName} 登入 Session 已過期！\n請重新執行 <code>npm run login</code> 完成驗證。`);
+        process.exit(1);
+      }
+      console.log(`[驗證成功] ${platform.platformName} 登入 Session 有效。\n`);
+
       console.log(`\n=== 開始執行平台任務: ${platform.platformName} ===`);
       for (const keyword of searchKeywords) {
         if (appliedCount >= config.applyLimitPerRun) {
@@ -119,14 +146,6 @@ async function main() {
           const jd = jdData.jdText;
           const location = jdData.location;
           console.log(`已成功擷取 JD，長度: ${jd.length} 字。`);
-
-          let expectedSalary = 0;
-          let acceptNegotiable = true;
-          try {
-            const resumeJson = JSON.parse(fs.readFileSync(config.resumePath, 'utf8'));
-            expectedSalary = resumeJson.basic_info?.expected_salary_monthly || 0;
-            acceptNegotiable = resumeJson.basic_info?.accept_negotiable_salary ?? true;
-          } catch(e) {}
 
           const isNegotiable = jd.includes('面議');
           let salaryPasses = true;
@@ -229,7 +248,15 @@ async function main() {
             await page.waitForTimeout(delay);
           }
 
-        } catch (jobErr) {
+        } catch (jobErr: any) {
+          if (jobErr?.message === 'SESSION_EXPIRED') {
+            const fatalMsg = `🚨 <b>[自動投遞系統中途終止]</b>\n在投遞職缺 "${job.title}" 時偵測到 104 登入已過期！\n程式已立即中斷防範無效嘗試。請執行 <code>npm run login</code> 重新驗證。`;
+            console.error(`\n==================================================`);
+            console.error(`[重大錯誤] 偵測到 104 登入 Session 已過期，終止程式。`);
+            console.error(`==================================================\n`);
+            await sendTelegramMessage(fatalMsg);
+            process.exit(1);
+          }
           console.error(`處理此職缺時發生非預期錯誤 (${job.jobId}):`, jobErr);
         }
       }

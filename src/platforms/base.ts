@@ -92,4 +92,5 @@ export abstract class JobPlatform {
   public abstract searchJobs(page: Page, keyword: string, pageNum?: number): Promise<ScrapedJob[]>;
   public abstract getJobDescription(page: Page, jobUrl: string): Promise<{ jdText: string, location: string }>;
   public abstract applyToJob(jobId: string, coverLetter: string): Promise<boolean>;
+  public abstract verifyLogin(): Promise<boolean>;
 }
