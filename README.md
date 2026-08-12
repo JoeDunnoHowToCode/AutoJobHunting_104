@@ -27,18 +27,18 @@
 
 ### 第一步：設定隱私金鑰 (`.env`)
 專案中包含了您的各式金鑰，**請複製 `.env.example` 並重新命名為 `.env`**。
-由於 `.gitignore` 已將其排除，您的密碼絕對不會外洩到 GitHub。
+由於 `.gitignore` 已將其排除，您的金鑰絕對不會外洩到 GitHub。
 ```env
-# Google Gemini API 金鑰
+# Google Gemini API 金鑰： https://aistudio.google.com/api-keys
 GEMINI_API_KEY=YOUR_GEMINI_API_KEY
 
-# OpenAI API 金鑰
+# OpenAI API 金鑰： https://platform.openai.com/api-keys
 OPENAI_API_KEY=YOUR_OPENAI_API_KEY
 
-# OpenRouter API 金鑰
+# OpenRouter API 金鑰： https://openrouter.ai/workspaces/default/keys
 OPENROUTER_API_KEY=YOUR_OPENROUTER_API_KEY
 
-# Ollama 本地 API 位置
+# Ollama 本地 API 位置 
 OLLAMA_BASE_URL=http://localhost:11434
 
 # Telegram 通知 Bot Token (由 @BotFather 取得)
@@ -72,11 +72,25 @@ NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
 }
 ```
 
+> 💡 **AI 契合度評分標準與建議門檻設定 (`scoreThreshold`)**：
+>
+> 系統採用 100 分滿分制的客觀加權量表進行評估：
+> - **1. 技能重合度 (0-40分)**：比對 JD 要求的程式語言、框架、工具與履歷明確記載的技能。
+> - **2. 經驗契合度 (0-25分)**：比對 JD 要求的年資、產業經驗與實際工作經歷。
+> - **3. 領域契合度 (0-15分)**：評估是否具備該產業領域（如金融、電商、AI 等）的知識或背景。
+> - **4. 加分項契合度 (0-15分)**：語言能力 (如多益英文)、專業證照或特殊加分條件。
+> - **5. 學歷門檻 (0-5分)**：比對學歷要求。
+>
+> **分數門檻 (`scoreThreshold`) 設定建議**：
+> - **75 ~ 80 分 (高精準 / 高面試率)**：適合追求高面試轉換率，僅投遞實力高度匹配的職缺。
+> - **65 ~ 70 分 (預設推薦 / 平衡投遞)**：適合積極尋找新機會，只要核心技能與經驗吻合即自動應徵。
+> - **55 ~ 60 分 (廣發 / 跨領域轉職)**：適合跨領域轉職或想儘可能爭取面試機會的使用者。
+
 ### 第三步：填寫個人履歷 (`resume.json`)
 系統的「搜尋關鍵字」與「AI 評分標準」全靠這份檔案。
 1. 請複製專案內的 `resume_example.json` 並將其重新命名為 `resume.json`。
-2. 將裡面的 John Doe 假資料替換為您真實的經歷、技能、期望薪資 (`expected_salary_monthly`)。
-3. 最重要的是設定您的期望職稱 (`desired_title`)，系統會自動把它當作 104 搜尋引擎的關鍵字！
+2. 將裡面的 John Doe 假資料替換為您真實的經歷、技能。
+3. 最重要的是設定您的期望職稱 (`desired_title`)及期望薪資 (`expected_salary_monthly`)，系統會自動把它當作 104 搜尋引擎的關鍵字以及篩選的標準！
 
 ### 第四步：手動登入 104 並儲存 Session
 因為 104 登入有圖形驗證碼，您只需要手動登入一次：
