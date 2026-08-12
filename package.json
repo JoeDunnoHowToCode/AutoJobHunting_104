@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "ts-node src/index.ts",
     "login": "ts-node src/login.ts",
-    "test-gemini": "ts-node src/test-gemini.ts"
+    "test-ai": "ts-node src/test-multi-llm.ts"
   },
   "dependencies": {
     "@google/genai": "latest",

@@ -101,13 +101,12 @@ NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
 
 ## 🌟 新手首次使用流暢度指南 (First-Time Tips)
 
-1. **快速驗證 API 金鑰 (無痛測試)**：
-   在執行完整瀏覽器流程前，可先執行以下指令：
+1. **快速驗證 API 金鑰與 LLM 配置 (無痛測試)**：
+   在執行完整瀏覽器流程前，可先執行以下測試指令：
    ```bash
-   npm run test-gemini            # 測試 Gemini 連線
-   npx ts-node src/test-multi-llm.ts  # 測試多平台 LLM 配置
+   npm run test-ai
    ```
-   系統會在 5 秒內測試 AI 金鑰連線、契合度評估與自薦信生成，確認 API 設定 100% 正確。
+   系統會在 5 秒內測試當前 `settings.json` 指定之 AI 金鑰連線、契合度評估與自薦信生成，確認 API 設定 100% 正確。
 
 2. **首次執行建議啟用有頭模式 (`headless: false`)**：
    第一次執行 `npm start` 時，建議在 `settings.json` 中設定 `"headless": false`。您可以直觀看到瀏覽器自動搜尋、捲動頁面、評估與填寫自薦信的全過程，確認一切無誤後再改回 `true` 進行背景隱藏執行。
