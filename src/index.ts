@@ -1,6 +1,7 @@
 import { JobPlatform } from './platforms/base';
 import { Platform104 } from './platforms/platform104';
 import { gemini } from './gemini';
+import { LLMFactory } from './ai/factory';
 import { db, JobRecord } from './db';
 import { config } from './config';
 import * as fs from 'fs';
@@ -178,9 +179,10 @@ async function main() {
             continue;
           }
 
-          console.log(`薪資與黑名單過濾通過，正在調用 Gemini 評估契合度...`);
+          console.log(`薪資與黑名單過濾通過，正在調用 AI 服務 (${config.aiProvider} / ${config.aiModel}) 評估契合度...`);
 
-          const evaluation = await gemini.evaluateJob(job.title, job.company, jd);
+          const aiService = LLMFactory.getProvider();
+          const evaluation = await aiService.evaluateJob(job.title, job.company, jd);
           const formattedReason = evaluation.reason.replace(/(\\d+\\.\\s)/g, '\\n$1').trim();
           console.log(`-> 評估分數: ${evaluation.score} 分 (技能:${evaluation.breakdown?.skillMatch ?? '-'} 經驗:${evaluation.breakdown?.experienceMatch ?? '-'} 領域:${evaluation.breakdown?.domainMatch ?? '-'} 學歷:${evaluation.breakdown?.educationMatch ?? '-'} 加分:${evaluation.breakdown?.bonusMatch ?? '-'})`);
           console.log(`-> 決策: ${evaluation.decision || 'N/A'} (信心度: ${evaluation.confidence?.toFixed(2) || 'N/A'})`);
@@ -189,7 +191,7 @@ async function main() {
           if (evaluation.shouldApply) {
             console.log(`[契合度合格] 分數 (${evaluation.score}) 大於等於門檻 (${config.scoreThreshold}) 且決策為 ${evaluation.decision}。開始生成客製化自薦信...`);
             
-            const customContent = await gemini.generateCustomizedContent(job.title, job.company, jd, {
+            const customContent = await aiService.generateCustomizedContent(job.title, job.company, jd, {
               strengths: evaluation.strengths,
               gaps: evaluation.gaps,
               decision: evaluation.decision,

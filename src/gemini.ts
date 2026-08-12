@@ -10,6 +10,8 @@ import {
   EvaluationOutput,
 } from './types';
 
+import { LLMProvider } from './ai/types';
+
 // Re-export for backward compatibility
 export type { EvaluationResult, CustomizationResult } from './types';
 
@@ -28,7 +30,7 @@ function sanitizeJdContent(jd: string): string {
   return sanitized;
 }
 
-class GeminiService {
+export class GeminiService implements LLMProvider {
   private ai: GoogleGenAI | null = null;
   private resumeSummaryCache: string | null = null;
 
@@ -240,7 +242,7 @@ ${sanitizedJd}
 
     return this.retryWithBackoff(async () => {
       const response = await this.ai!.models.generateContent({
-        model: 'gemini-flash-lite-latest',
+        model: config.aiModel,
         contents: prompt,
       });
 
@@ -351,7 +353,7 @@ ${sanitizedJd}
 
     return this.retryWithBackoff(async () => {
       const response = await this.ai!.models.generateContent({
-        model: 'gemini-flash-lite-latest',
+        model: config.aiModel,
         contents: prompt,
       });
 

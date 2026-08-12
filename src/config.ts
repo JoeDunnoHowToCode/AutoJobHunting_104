@@ -6,6 +6,11 @@ dotenv.config();
 
 export interface Config {
   geminiApiKey: string;
+  openaiApiKey: string;
+  openrouterApiKey: string;
+  ollamaBaseUrl: string;
+  aiProvider: 'gemini' | 'openai' | 'openrouter' | 'ollama';
+  aiModel: string;
   scoreThreshold: number;
   resumePath: string;
   authStatePath: string;
@@ -36,6 +41,11 @@ try {
 
 export const config: Config = {
   geminiApiKey: process.env.GEMINI_API_KEY || '',
+  openaiApiKey: process.env.OPENAI_API_KEY || '',
+  openrouterApiKey: process.env.OPENROUTER_API_KEY || '',
+  ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+  aiProvider: settings.aiProvider || 'gemini',
+  aiModel: settings.aiModel || 'gemini-flash-lite-latest',
   scoreThreshold: settings.scoreThreshold ?? 65,
   resumePath: path.resolve(rootDir, 'resume.json'),
   authStatePath: path.resolve(rootDir, 'auth_state.json'),
