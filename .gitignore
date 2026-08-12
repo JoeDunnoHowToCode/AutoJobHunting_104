@@ -24,3 +24,8 @@ test-*.js
 
 # OS files
 .DS_Store
+
+# Internal Architecture Plans & Extracted Files
+plans/
+online_resume_extracted.json
+
