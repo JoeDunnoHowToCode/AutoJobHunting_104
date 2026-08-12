@@ -33,6 +33,7 @@ GEMINI_API_KEY=YOUR_GEMINI_API_KEY
 
 # Telegram 通知推播 (可選，若未設定會自動跳過不影響運作)
 TELEGRAM_BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
+# 請先發送訊息給您的 Bot，系統啟動時會自動抓取 Chat ID，或者您也可以手動填寫
 TELEGRAM_CHAT_ID=
 
 # Notion 履歷歸檔整合 (可選，若未設定會自動跳過不影響運作)
