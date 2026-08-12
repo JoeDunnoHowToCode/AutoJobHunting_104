@@ -1,8 +1,8 @@
 # 🚀 Auto-Job-Hunter (全自動 AI 履歷投遞引擎)
 
-這是一個以 Node.js、Playwright 與 Gemini AI 為核心開發的「全自動化求職助理」。
+這是一個以 Node.js、Playwright 與 Multi-LLM AI Engine (Gemini, OpenAI, OpenRouter, Ollama) 為核心開發的「全自動化求職助理」。
 目前系統已支援 **104 人力銀行**，未來將以微服務外掛架構陸續支援 CakeResume、Yourator、1111 等各大求職平台！
-系統會根據您的個人履歷 (`resume.json`)，自動在平台上搜尋職缺、透過 Gemini 篩選適合度、自動撰寫客製化自薦信，並直接完成應徵。您甚至能透過 Telegram 接收即時投遞戰報！以及寫入 **Notion 資料庫** 歸檔。
+系統會根據您的個人履歷 (`resume.json`)，自動在平台上搜尋職缺、透過 AI 評估適合度、自動撰寫客製化自薦信，並直接完成應徵。您甚至能透過 Telegram 接收即時投遞戰報！以及寫入 **Notion 資料庫** 歸檔。
 
 ---
 
@@ -29,15 +29,24 @@
 專案中包含了您的各式金鑰，**請複製 `.env.example` 並重新命名為 `.env`**。
 由於 `.gitignore` 已將其排除，您的密碼絕對不會外洩到 GitHub。
 ```env
-# Google Gemini API 金鑰 (必填)
+# Google Gemini API 金鑰
 GEMINI_API_KEY=YOUR_GEMINI_API_KEY
 
-# Telegram 通知推播 (可選，若未設定會自動跳過不影響運作)
+# OpenAI API 金鑰
+OPENAI_API_KEY=YOUR_OPENAI_API_KEY
+
+# OpenRouter API 金鑰
+OPENROUTER_API_KEY=YOUR_OPENROUTER_API_KEY
+
+# Ollama 本地 API 位置
+OLLAMA_BASE_URL=http://localhost:11434
+
+# Telegram 通知 Bot Token (由 @BotFather 取得)
 TELEGRAM_BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
 # 請先發送訊息給您的 Bot，系統啟動時會自動抓取 Chat ID，或者您也可以手動填寫
 TELEGRAM_CHAT_ID=
 
-# Notion 履歷歸檔整合 (可選，若未設定會自動跳過不影響運作)
+# Notion 紀錄整合
 NOTION_API_TOKEN=YOUR_NOTION_INTEGRATION_TOKEN
 NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
 ```
@@ -81,9 +90,10 @@ NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
 1. **快速驗證 API 金鑰 (無痛測試)**：
    在執行完整瀏覽器流程前，可先執行以下指令：
    ```bash
-   npm run test-gemini
+   npm run test-gemini            # 測試 Gemini 連線
+   npx ts-node src/test-multi-llm.ts  # 測試多平台 LLM 配置
    ```
-   系統會在 5 秒內測試 Gemini 金鑰連線、AI 評估與自薦信生成，確認 API 設定 100% 正確。
+   系統會在 5 秒內測試 AI 金鑰連線、契合度評估與自薦信生成，確認 API 設定 100% 正確。
 
 2. **首次執行建議啟用有頭模式 (`headless: false`)**：
    第一次執行 `npm start` 時，建議在 `settings.json` 中設定 `"headless": false`。您可以直觀看到瀏覽器自動搜尋、捲動頁面、評估與填寫自薦信的全過程，確認一切無誤後再改回 `true` 進行背景隱藏執行。
@@ -101,12 +111,12 @@ npm start
 ```
 系統將會：
 1. 讀取您的 `resume.json` 中的 `desired_title` 開始搜尋最新職缺。
-2. 逐一比對 JD，透過 Gemini 給出評分。
+2. 逐一比對 JD，透過指定 AI 模型 (Gemini / OpenAI / OpenRouter / Ollama) 給出評估。
 3. 分數達標且通過薪資/黑名單過濾後自動投遞。
 4. 將結果發送至 Telegram 並記錄至 Notion。
 
 ### ⏰ 排程自動化
-強烈建議將指令加入系統排程（如 `crontab`）中，讓機器人每天定時為您搜尋並投遞新職缺。
+可以將指令加入系統排程（如 `crontab`）中，讓機器人每天定時為您搜尋並投遞新職缺。
 ```bash
 # 每天早上 9 點自動執行一次
 0 9 * * * cd /您的路徑/auto-job-hunter && npm run start >> /tmp/auto-job.log 2>&1
