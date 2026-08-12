@@ -20,22 +20,29 @@ function sanitizeJdContent(jd: string): string {
     .replace(/output\s+this\s+json/gi, '[FILTERED]');
 }
 
-export class OpenAIProvider implements LLMProvider {
+export class OpenRouterProvider implements LLMProvider {
   private client: OpenAI | null = null;
   private model: string;
 
   constructor() {
     this.model = config.aiModel;
-    const apiKey = config.openaiApiKey;
+    const apiKey = config.openrouterApiKey;
     if (!apiKey) {
-      console.warn('[OpenAIProvider] Warning: OPENAI_API_KEY is not set.');
+      console.warn('[OpenRouterProvider] Warning: OPENROUTER_API_KEY is not set.');
       return;
     }
 
     try {
-      this.client = new OpenAI({ apiKey });
+      this.client = new OpenAI({
+        apiKey,
+        baseURL: 'https://openrouter.ai/api/v1',
+        defaultHeaders: {
+          'HTTP-Referer': 'https://github.com/auto-job-hunter',
+          'X-Title': 'AutoJobHunter',
+        },
+      });
     } catch (err) {
-      console.error('[OpenAIProvider] Failed to initialize OpenAI client:', err);
+      console.error('[OpenRouterProvider] Failed to initialize OpenRouter client:', err);
     }
   }
 
@@ -59,7 +66,7 @@ export class OpenAIProvider implements LLMProvider {
     jobDescription: string
   ): Promise<EvaluationResult> {
     if (!this.client) {
-      throw new Error('[OpenAIProvider] OPENAI_API_KEY 未設定或客戶端初始化失敗。');
+      throw new Error('[OpenRouterProvider] OPENROUTER_API_KEY 未設定或客戶端初始化失敗。');
     }
 
     const sanitizedJd = sanitizeJdContent(jobDescription);
@@ -99,7 +106,7 @@ export class OpenAIProvider implements LLMProvider {
     const result = EvaluationOutputSchema.safeParse(parsed);
 
     if (!result.success) {
-      throw new Error(`[OpenAIProvider] JSON 結構驗證失敗: ${result.error.issues.map(i => i.message).join(', ')}`);
+      throw new Error(`[OpenRouterProvider] JSON 結構驗證失敗: ${result.error.issues.map(i => i.message).join(', ')}`);
     }
 
     const data: EvaluationOutput = result.data;
@@ -137,7 +144,7 @@ export class OpenAIProvider implements LLMProvider {
     }
   ): Promise<CustomizationResult> {
     if (!this.client) {
-      throw new Error('[OpenAIProvider] OPENAI_API_KEY 未設定或客戶端初始化失敗。');
+      throw new Error('[OpenRouterProvider] OPENROUTER_API_KEY 未設定或客戶端初始化失敗。');
     }
 
     const sanitizedJd = sanitizeJdContent(jobDescription);
@@ -173,7 +180,7 @@ ${evalSection}
     const result = CustomizationOutputSchema.safeParse(parsed);
 
     if (!result.success) {
-      throw new Error(`[OpenAIProvider] 自薦信 JSON 結構驗證失敗: ${result.error.issues.map(i => i.message).join(', ')}`);
+      throw new Error(`[OpenRouterProvider] 自薦信 JSON 結構驗證失敗: ${result.error.issues.map(i => i.message).join(', ')}`);
     }
 
     return {
