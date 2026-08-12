@@ -1,6 +1,5 @@
 import { JobPlatform } from './platforms/base';
 import { Platform104 } from './platforms/platform104';
-import { gemini } from './gemini';
 import { LLMFactory } from './ai/factory';
 import { db, JobRecord } from './db';
 import { config } from './config';
