@@ -59,7 +59,7 @@ NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
 ```json
 {
   "aiProvider": "gemini",          // 可選: "gemini" | "openai" | "openrouter" | "ollama"
-  "aiModel": "gemini-flash-lite-latest", // 單一通用模型名稱 (例: gemini-2.5-flash, gpt-4o-mini, anthropic/claude-3.5-sonnet)
+  "aiModel": "gemini-flash-lite-latest", // 單一通用模型名稱 (例: gemini-flash-lite-latest, gpt-4o-mini, anthropic/claude-3.5-sonnet, 可以到API介面查看模型名稱)
   "scoreThreshold": 65,            // 契合度大於等於此分數才會自動投遞
   "applyLimitPerRun": 30,          // 單次腳本執行的最大投遞數量上限
   "headless": true,                // true=背景隱藏執行, false=會跳出瀏覽器畫面
