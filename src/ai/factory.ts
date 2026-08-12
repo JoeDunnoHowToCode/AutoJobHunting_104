@@ -1,16 +1,26 @@
 import { config } from '../config';
 import { LLMProvider } from './types';
 import { gemini } from '../gemini';
+import { OpenAIProvider } from './providers/openai';
 
 export class LLMFactory {
-  public static getProvider(): LLMProvider {
-    switch (config.aiProvider) {
+  public static createProvider(providerName: 'gemini' | 'openai' | 'openrouter' | 'ollama'): LLMProvider {
+    switch (providerName) {
       case 'gemini':
         return gemini;
-      // Additional providers (openai, openrouter, ollama) can be plugged in here easily
+      case 'openai':
+        return new OpenAIProvider({ provider: 'openai' });
+      case 'openrouter':
+        return new OpenAIProvider({ provider: 'openrouter' });
+      case 'ollama':
+        return new OpenAIProvider({ provider: 'ollama' });
       default:
-        console.warn(`[LLMFactory] Unknown provider '${config.aiProvider}', falling back to Gemini.`);
+        console.warn(`[LLMFactory] Unknown provider '${providerName}', falling back to Gemini.`);
         return gemini;
     }
+  }
+
+  public static getProvider(): LLMProvider {
+    return this.createProvider(config.aiProvider);
   }
 }
