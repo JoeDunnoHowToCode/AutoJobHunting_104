@@ -10,6 +10,7 @@ import {
   RequirementMatch,
 } from '../../types';
 import { LLMProvider } from '../types';
+import { retryTransient } from '../retry';
 
 function sanitizeJdContent(jd: string): string {
   return jd
@@ -74,28 +75,6 @@ export class GeminiProvider implements LLMProvider {
     } catch (e) {
       return fs.readFileSync(config.resumePath, 'utf8');
     }
-  }
-
-  private async retryWithBackoff<T>(
-    operation: () => Promise<T>,
-    context: string,
-    maxRetries: number = 3
-  ): Promise<T> {
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await operation();
-      } catch (error) {
-        lastError = error;
-        const remaining = maxRetries - attempt;
-        console.error(`${context} 失敗，剩餘重試次數: ${remaining}`, error);
-        if (attempt < maxRetries) {
-          const delay = Math.pow(2, attempt - 1) * 1000;
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
-    }
-    throw lastError;
   }
 
   private parseJsonResponse(text: string): any {
@@ -178,7 +157,7 @@ ${sanitizedJd}
   "reason": "評估理由。"
 }`;
 
-    return this.retryWithBackoff(async () => {
+    return retryTransient(async () => {
       const response = await this.ai!.models.generateContent({
         model: config.aiModel,
         contents: prompt,
@@ -274,7 +253,7 @@ ${sanitizedJd}
   "optimizedSelfIntro": "填寫精簡自我介紹（約 100-200 字，繁體中文）。"
 }`;
 
-    return this.retryWithBackoff(async () => {
+    return retryTransient(async () => {
       const response = await this.ai!.models.generateContent({
         model: config.aiModel,
         contents: prompt,

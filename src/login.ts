@@ -23,11 +23,7 @@ async function run() {
   console.log('請在瀏覽器中手動完成登入（包含填寫帳密、處理驗證碼等）。');
   console.log('==================================================\n');
 
-  // Launch browser in headed mode (visible) with stealth argument
-  const browser = await chromium.launch({ 
-    headless: false,
-    args: ['--disable-blink-features=AutomationControlled']
-  });
+  const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',

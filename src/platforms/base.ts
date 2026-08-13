@@ -1,10 +1,6 @@
-import { chromium } from 'playwright-extra';
-import stealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { BrowserContext, Page } from 'playwright';
+import { chromium, BrowserContext, Page } from 'playwright';
 import * as fs from 'fs';
 import { config } from '../config';
-
-chromium.use(stealthPlugin());
 
 export interface ScrapedJob {
   jobId: string;
@@ -31,10 +27,7 @@ export abstract class JobPlatform {
       }
     }
 
-    const browser = await chromium.launch({ 
-      headless: config.headless,
-      args: ['--disable-blink-features=AutomationControlled']
-    });
+    const browser = await chromium.launch({ headless: config.headless });
 
     this.searchContext = await browser.newContext({
       viewport: { width: 1280, height: 800 },
@@ -69,10 +62,7 @@ export abstract class JobPlatform {
       }
     }
 
-    const browser = await chromium.launch({ 
-      headless: config.headless,
-      args: ['--disable-blink-features=AutomationControlled']
-    });
+    const browser = await chromium.launch({ headless: config.headless });
     
     const contextOptions: any = {
       viewport: { width: 1280, height: 800 },

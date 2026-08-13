@@ -23,10 +23,6 @@ export interface Config {
   notionApiToken: string;
   notionDatabaseId: string;
   areas: string[];
-  jdConcurrency: number;
-  aiConcurrency: number;
-  maxApplyQueueSize: number;
-  resumeApplyQueueSize: number;
 }
 
 const rootDir = path.resolve(__dirname, '..');
@@ -42,6 +38,15 @@ try {
 } catch (e) {
   console.warn('Failed to load settings.json, using defaults.');
 }
+
+/** Internal safety limits. Keep them out of user settings to avoid unsafe tuning. */
+export const pipelineConfig = {
+  jdConcurrency: 1,
+  aiConcurrency: 2,
+  maxApplyQueueSize: 5,
+  resumeApplyQueueSize: 2,
+  maxInFlightJobs: 8,
+} as const;
 
 export const config: Config = {
   geminiApiKey: process.env.GEMINI_API_KEY || '',
@@ -61,9 +66,5 @@ export const config: Config = {
   telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
   notionApiToken: process.env.NOTION_API_TOKEN || '',
   notionDatabaseId: process.env.NOTION_DATABASE_ID || '',
-  areas: settings.areas || [],
-  jdConcurrency: settings.jdConcurrency ?? 1,
-  aiConcurrency: settings.aiConcurrency ?? 2,
-  maxApplyQueueSize: settings.maxApplyQueueSize ?? 5,
-  resumeApplyQueueSize: settings.resumeApplyQueueSize ?? 2
+  areas: settings.areas || []
 };

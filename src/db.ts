@@ -28,9 +28,11 @@ interface ApplyRecordData {
 export class JobDatabase {
   private data: ApplyRecordData = {};
   private currentApplyId: number = 0;
-  private processedMap: Map<string, { status: 'applied' | 'skipped' | 'failed'; dateStr: string }> = new Map();
+  private processedMap = new Map<string, { hasApplied: boolean; latestSkippedDate?: string }>();
+  private readonly dbPath: string;
 
-  constructor() {
+  constructor(dbPath: string = config.dbPath) {
+    this.dbPath = dbPath;
     this.load();
   }
 
@@ -39,10 +41,20 @@ export class JobDatabase {
     for (const date in this.data) {
       for (const status of ['applied', 'skipped', 'failed'] as const) {
         for (const record of this.data[date][status]) {
-          this.processedMap.set(record.jobId, { status: record.status, dateStr: date });
+          this.updateProcessedIndex(record, date);
         }
       }
     }
+  }
+
+  private updateProcessedIndex(record: JobRecord, dateStr: string): void {
+    const entry = this.processedMap.get(record.jobId) || { hasApplied: false };
+    if (record.status === 'applied') {
+      entry.hasApplied = true;
+    } else if (record.status === 'skipped' && (!entry.latestSkippedDate || dateStr > entry.latestSkippedDate)) {
+      entry.latestSkippedDate = dateStr;
+    }
+    this.processedMap.set(record.jobId, entry);
   }
 
   private getTodayDateString(): string {
@@ -54,8 +66,8 @@ export class JobDatabase {
 
   private load(): void {
     try {
-      if (fs.existsSync(config.dbPath)) {
-        const rawData = fs.readFileSync(config.dbPath, 'utf8');
+      if (fs.existsSync(this.dbPath)) {
+        const rawData = fs.readFileSync(this.dbPath, 'utf8');
         const parsed = JSON.parse(rawData);
         
         // Check if it's the old flat format or the new date-based format
@@ -103,9 +115,9 @@ export class JobDatabase {
 
   private save(): void {
     try {
-      const tmp = config.dbPath + '.tmp';
+      const tmp = this.dbPath + '.tmp';
       fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2), 'utf8');
-      fs.renameSync(tmp, config.dbPath);
+      fs.renameSync(tmp, this.dbPath);
     } catch (error) {
       console.error('Failed to save database. Halting to prevent silent write error:', error);
       throw error;
@@ -120,9 +132,9 @@ export class JobDatabase {
   public hasBeenProcessed(jobId: string): boolean {
     const entry = this.processedMap.get(jobId);
     if (!entry) return false;
-    if (entry.status === 'failed') return false;
-    if (entry.status === 'skipped') {
-      const recordDate = new Date(entry.dateStr);
+    if (entry.hasApplied) return true;
+    if (entry.latestSkippedDate) {
+      const recordDate = new Date(entry.latestSkippedDate);
       const now = new Date();
       const daysSince = Math.floor((now.getTime() - recordDate.getTime()) / (1000 * 60 * 60 * 24));
       if (daysSince >= 14) return false;
@@ -140,7 +152,7 @@ export class JobDatabase {
     this.data[today].failed = this.data[today].failed.filter(r => r.jobId !== record.jobId);
     
     this.data[today][record.status].push(record);
-    this.processedMap.set(record.jobId, { status: record.status, dateStr: today });
+    this.updateProcessedIndex(record, today);
     this.save();
   }
 

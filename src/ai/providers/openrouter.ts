@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import * as fs from 'fs';
 import { LLMProvider } from '../types';
 import { config } from '../../config';
+import { retryTransient } from '../retry';
 import {
   EvaluationResult,
   CustomizationResult,
@@ -75,28 +76,6 @@ export class OpenRouterProvider implements LLMProvider {
     }
   }
 
-  private async retryWithBackoff<T>(
-    operation: () => Promise<T>,
-    context: string,
-    maxRetries: number = 3
-  ): Promise<T> {
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await operation();
-      } catch (error) {
-        lastError = error;
-        const remaining = maxRetries - attempt;
-        console.error(`${context} 失敗，剩餘重試次數: ${remaining}`, error);
-        if (attempt < maxRetries) {
-          const delay = Math.pow(2, attempt - 1) * 1000;
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
-    }
-    throw lastError;
-  }
-
   private computeDecision(
     totalScore: number,
     mustHaveMatches: RequirementMatch[]
@@ -144,7 +123,7 @@ export class OpenRouterProvider implements LLMProvider {
   "reason": "評估理由說明。"
 }`;
 
-    return this.retryWithBackoff(async () => {
+    return retryTransient(async () => {
     const completion = await this.client!.chat.completions.create({
       model: this.model,
       messages: [
@@ -221,7 +200,7 @@ ${evalSection}
   "optimizedSelfIntro": "精簡自我介紹 (約 100-200 字，台灣繁體中文)"
 }`;
 
-    return this.retryWithBackoff(async () => {
+    return retryTransient(async () => {
     const completion = await this.client!.chat.completions.create({
       model: this.model,
       messages: [

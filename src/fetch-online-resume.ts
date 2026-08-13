@@ -1,10 +1,7 @@
-import { chromium } from 'playwright-extra';
-import stealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { chromium } from 'playwright';
 import { config } from './config';
 import * as fs from 'fs';
 import * as path from 'path';
-
-chromium.use(stealthPlugin());
 
 async function fetchAndSaveOnlineResume() {
   console.log('==================================================');
