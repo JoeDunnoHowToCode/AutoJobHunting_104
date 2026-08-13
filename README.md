@@ -92,9 +92,10 @@ NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
 3. 最重要的是設定您的期望職稱 (`desired_title`)及期望薪資 (`expected_salary_monthly`)，系統會自動把它當作 104 搜尋引擎的關鍵字以及篩選的標準！
 
 ### 第四步：手動登入 104 並儲存 Session
-因為 104 登入有圖形驗證碼，您只需要手動登入一次：
+因為 104 登入有圖形驗證碼，請由使用者手動登入：
 1. 終端機執行：`npm run login`
-2. 此步驟會啟動瀏覽器為您開啟 104 首頁。請在視窗內手動完成 104 的登入程序（包含圖片驗證碼）。登入完成後，回到終端機按下 `Enter`，系統會將 104 的 Session 儲存至本地的 `auth_state.json` 檔案中，之後就會全自動免登入。
+2. 此步驟會啟動可見的正式 Chrome 並開啟 104 首頁。請在視窗內手動完成登入程序（包含平台要求的驗證）。登入完成後，回到終端機按下 `Enter`，系統只會將 **104 網域**的狀態儲存到本地 `auth_state.json`，不保存無關第三方網站資料。
+3. 儲存後先執行 `npm run preflight-104:review -- <jobId>`。後台頁面回應 200 只代表 Session 尚可登入，**不保證**自動化 Context 可存取職缺或應徵表單；若 preflight 顯示 403、驗證或限流，請停止，不要重試或試圖改變瀏覽器特徵。
 
 ---
 
@@ -110,8 +111,8 @@ NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
 2. **104 一律使用可見的正式 Chrome**：
    104 的 JD 在背景模式會回傳 HTTP 403，因此搜尋、JD 與應徵流程會固定啟動本機已安裝的 Google Chrome 並保持可見。這是平台相容性限制，不使用 stealth、假 User-Agent 或規避機制；請勿將它改回背景模式。
 
-3. **登入憑證有效性**：
-   手動登入 (`npm run login`) 生成的 `auth_state.json` 憑證通常可維持數週。若系統日誌提示 `Session 已過期`，只需重新執行一次 `npm run login` 即可快速完成更新。
+3. **登入憑證與表單存取是兩件事**：
+   `auth_state.json` 只是一份本機登入狀態快照；後台驗證成功不等同每個 104 頁面都會允許自動化 Context 存取。重新手動登入後務必先通過單筆 `preflight-104:review`；若收到 403／驗證／限流，停止流程並以一般手動瀏覽器處理，不要反覆重試或採用 stealth、代理、假 User-Agent 等規避方法。
 
 ---
 
@@ -141,6 +142,14 @@ npm run dry-run
 * JD、搜尋或應徵頁遇到 HTTP 403 時都會在第一筆停止；不會把限制頁當 JD 傳給 LLM，也不會繼續掃描其他職缺。
 
 `npm run dry-run:headed` 保留為相容別名；104 本來就會開啟可見 Chrome。若要在表單開啟且檢查完成後停住，執行 `npm run dry-run:review`，然後只按 Enter 關閉表單；此模式同樣不會填寫、勾選或送出。
+
+若只需重驗已知職缺的送出前表單、且不希望將履歷與 JD 交給外部 LLM，可使用更窄的唯讀檢查：
+
+```bash
+npm run preflight-104:review -- 8kbs5
+```
+
+它要求明確指定一個 job ID，只會驗證保存的 Session 並開啟該職缺的送出前表單。它不搜尋、不讀取履歷、不呼叫 LLM、不寫入 `applyRecord.json`、Notion 或 Telegram，也不填寫、勾選或送出；執行時停在表單供人工檢查，按 Enter 關閉。
 
 ### 104 連線診斷（唯讀）
 

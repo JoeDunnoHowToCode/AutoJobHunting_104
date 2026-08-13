@@ -65,6 +65,21 @@ export abstract class JobPlatform {
     return launchConfiguredBrowser({ headless: false });
   }
 
+  private async createPublicContext(purpose: 'search' | 'detail'): Promise<BrowserContext> {
+    const browser = await this.launch104Browser();
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      locale: 'zh-TW',
+      timezoneId: 'Asia/Taipei',
+    });
+    console.log(
+      purpose === 'search'
+        ? 'Using isolated public 104 browser context for search requests.'
+        : 'Using fresh public 104 browser context for one JD request.',
+    );
+    return context;
+  }
+
   private async getPublicPage(): Promise<Page> {
     if (this.publicContext) {
       try {
@@ -74,14 +89,13 @@ export abstract class JobPlatform {
       }
     }
 
-    const browser = await this.launch104Browser();
-    this.publicContext = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
-      locale: 'zh-TW',
-      timezoneId: 'Asia/Taipei',
-    });
-    console.log('Using isolated public 104 browser context for search and JD requests.');
+    this.publicContext = await this.createPublicContext('search');
     return await this.publicContext.newPage();
+  }
+
+  private async getIsolatedDetailPage(): Promise<Page> {
+    const detailContext = await this.createPublicContext('detail');
+    return detailContext.newPage();
   }
 
   private async getAuthenticatedPage(): Promise<Page> {
@@ -113,13 +127,23 @@ export abstract class JobPlatform {
   }
 
   public async getDetailPage(): Promise<Page> {
-    return this.getPublicPage();
+    // Do not reuse search cookies or transient state for a JD request. A
+    // normal direct JD navigation has different access behaviour after a
+    // search page, so each serial JD gets its own disposable public context.
+    return this.getIsolatedDetailPage();
   }
 
   public async closePage(page: Page): Promise<void> {
     try {
-      if (page && !page.isClosed()) {
-        await page.close();
+      if (!page) return;
+      const context = page.context();
+      const isSharedContext = context === this.publicContext || context === this.authenticatedContext;
+      if (isSharedContext) {
+        if (!page.isClosed()) await page.close();
+      } else {
+        // Detail pages own a browser/context. Closing the browser releases all
+        // associated pages, storage, and Chromium resources together.
+        await context.browser()?.close();
       }
     } catch (e) {}
   }

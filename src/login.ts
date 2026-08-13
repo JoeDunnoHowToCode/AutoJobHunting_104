@@ -1,6 +1,8 @@
 import * as readline from 'readline';
+import * as fs from 'fs';
 import { config } from './config';
 import { launchConfiguredBrowser } from './browser';
+import { filter104StorageState } from './session-state';
 
 function askQuestion(query: string): Promise<string> {
   const rl = readline.createInterface({
@@ -46,12 +48,15 @@ async function run() {
   
   await askQuestion('按 [Enter] 鍵以儲存登入 Session 狀態並關閉瀏覽器...');
 
-  console.log('正在儲存登入狀態至:', config.authStatePath);
-  await context.storageState({ path: config.authStatePath });
-  console.log('登入狀態儲存成功！');
+  console.log('正在儲存 104 登入狀態至:', config.authStatePath);
+  const storageState = await context.storageState();
+  const filteredState = filter104StorageState(storageState);
+  fs.writeFileSync(config.authStatePath, JSON.stringify(filteredState, null, 2), { mode: 0o600 });
+  fs.chmodSync(config.authStatePath, 0o600);
+  console.log('登入狀態儲存成功（僅保留 104 網域狀態）。');
 
   await browser.close();
-  console.log('瀏覽器已關閉。現在您可以使用無頭模式執行自動投遞任務。');
+  console.log('瀏覽器已關閉。104 流程會固定使用可見 Chrome；請先執行單筆 preflight 確認送出前表單可存取。');
 }
 
 run().catch(error => {
