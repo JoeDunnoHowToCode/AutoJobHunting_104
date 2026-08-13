@@ -6,6 +6,9 @@ import { OpenRouterProvider } from './providers/openrouter';
 import { OllamaProvider } from './providers/ollama';
 
 export class LLMFactory {
+  private static instance: LLMProvider | null = null;
+  private static currentProvider: string | null = null;
+
   public static createProvider(providerName: 'gemini' | 'openai' | 'openrouter' | 'ollama'): LLMProvider {
     switch (providerName) {
       case 'gemini':
@@ -23,6 +26,10 @@ export class LLMFactory {
   }
 
   public static getProvider(): LLMProvider {
-    return this.createProvider(config.aiProvider);
+    if (!this.instance || this.currentProvider !== config.aiProvider) {
+      this.instance = this.createProvider(config.aiProvider);
+      this.currentProvider = config.aiProvider;
+    }
+    return this.instance;
   }
 }

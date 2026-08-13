@@ -90,7 +90,9 @@ export class JobDatabase {
 
   private save(): void {
     try {
-      fs.writeFileSync(config.dbPath, JSON.stringify(this.data, null, 2), 'utf8');
+      const tmp = config.dbPath + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2), 'utf8');
+      fs.renameSync(tmp, config.dbPath);
     } catch (error) {
       console.error('Failed to save database. Halting to prevent silent write error:', error);
       throw error;

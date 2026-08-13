@@ -23,11 +23,12 @@ export abstract class JobPlatform {
   public async getSearchPage(): Promise<Page> {
     if (this.searchContext) {
       try {
-        const oldBrowser = this.searchContext.browser();
-        await this.searchContext.close();
-        await oldBrowser?.close();
-      } catch (e) {}
-      this.searchContext = null;
+        // Reuse existing context, just return a new page
+        return await this.searchContext.newPage();
+      } catch (e) {
+        // Context is dead, recreate
+        this.searchContext = null;
+      }
     }
 
     const browser = await chromium.launch({ 
@@ -48,11 +49,12 @@ export abstract class JobPlatform {
   public async getApplyPage(): Promise<Page> {
     if (this.applyContext) {
       try {
-        const oldBrowser = this.applyContext.browser();
-        await this.applyContext.close();
-        await oldBrowser?.close();
-      } catch (e) {}
-      this.applyContext = null;
+        // Reuse existing context, just return a new page
+        return await this.applyContext.newPage();
+      } catch (e) {
+        // Context is dead, recreate
+        this.applyContext = null;
+      }
     }
 
     const browser = await chromium.launch({ 

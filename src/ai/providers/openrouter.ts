@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import * as fs from 'fs';
 import { LLMProvider } from '../types';
 import { config } from '../../config';
 import {
@@ -23,6 +24,7 @@ function sanitizeJdContent(jd: string): string {
 export class OpenRouterProvider implements LLMProvider {
   private client: OpenAI | null = null;
   private model: string;
+  private resumeSummaryCache: string | null = null;
 
   constructor() {
     this.model = config.aiModel;
@@ -44,6 +46,55 @@ export class OpenRouterProvider implements LLMProvider {
     } catch (err) {
       console.error('[OpenRouterProvider] Failed to initialize OpenRouter client:', err);
     }
+  }
+
+  private buildResumeSummary(): string {
+    if (this.resumeSummaryCache) return this.resumeSummaryCache;
+    if (!fs.existsSync(config.resumePath)) return '';
+    try {
+      const resumeJson = JSON.parse(fs.readFileSync(config.resumePath, 'utf8'));
+      const summary: Record<string, any> = {};
+      if (resumeJson.summary) summary.summary = resumeJson.summary;
+      if (resumeJson.core_skills) summary.core_skills = resumeJson.core_skills;
+      if (resumeJson.work_experience) summary.work_experience = resumeJson.work_experience;
+      if (resumeJson.education) summary.education = resumeJson.education;
+      if (resumeJson.certifications) summary.certifications = resumeJson.certifications;
+      if (resumeJson.languages) summary.languages = resumeJson.languages;
+      if (resumeJson.work_content_preferences) summary.work_content_preferences = resumeJson.work_content_preferences;
+      if (resumeJson.basic_info) {
+        summary.basic_info = {
+          expected_salary_monthly: resumeJson.basic_info.expected_salary_monthly,
+          desired_title: resumeJson.basic_info.desired_title,
+          tags: resumeJson.basic_info.tags,
+        };
+      }
+      this.resumeSummaryCache = JSON.stringify(summary, null, 2);
+      return this.resumeSummaryCache;
+    } catch (e) {
+      return fs.readFileSync(config.resumePath, 'utf8');
+    }
+  }
+
+  private async retryWithBackoff<T>(
+    operation: () => Promise<T>,
+    context: string,
+    maxRetries: number = 3
+  ): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error;
+        const remaining = maxRetries - attempt;
+        console.error(`${context} 失敗，剩餘重試次數: ${remaining}`, error);
+        if (attempt < maxRetries) {
+          const delay = Math.pow(2, attempt - 1) * 1000;
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+    throw lastError;
   }
 
   private computeDecision(
@@ -70,7 +121,8 @@ export class OpenRouterProvider implements LLMProvider {
     }
 
     const sanitizedJd = sanitizeJdContent(jobDescription);
-    const systemPrompt = `你是一位專業的科技業職涯顧問與人資專家。請根據加權評分量表比對求職者與職缺，並【嚴格】輸出標準 JSON 格式。`;
+    const resume = this.buildResumeSummary();
+    const systemPrompt = `你是一位專業的科技業職涯顧問與人資專家。請根據加權評分量表比對求職者與職缺，並【嚴格】輸出標準 JSON 格式。\n\n【求職者履歷摘要】\n${resume}`;
     const userPrompt = `
 【目標公司】: ${companyName}
 【目標職缺】: ${jobTitle}
@@ -92,7 +144,8 @@ export class OpenRouterProvider implements LLMProvider {
   "reason": "評估理由說明。"
 }`;
 
-    const completion = await this.client.chat.completions.create({
+    return this.retryWithBackoff(async () => {
+    const completion = await this.client!.chat.completions.create({
       model: this.model,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -131,6 +184,7 @@ export class OpenRouterProvider implements LLMProvider {
       gaps: data.gaps,
       mustHaveMatches: data.mustHaveMatches,
     };
+    }, `OpenRouter API 評估 ("${jobTitle}")`);
   }
 
   public async generateCustomizedContent(
@@ -148,12 +202,13 @@ export class OpenRouterProvider implements LLMProvider {
     }
 
     const sanitizedJd = sanitizeJdContent(jobDescription);
+    const resume = this.buildResumeSummary();
     let evalSection = '';
     if (evaluationContext) {
       evalSection = `AI 評估結果：優勢【${evaluationContext.strengths?.join(', ')}】，缺口【${evaluationContext.gaps?.join(', ')}】`;
     }
 
-    const systemPrompt = `你是一位求職專家。請根據求職者優勢與 JD 生成客製化自薦信與自我介紹，並【嚴格】輸出 JSON 格式。`;
+    const systemPrompt = `你是一位求職專家。請根據求職者優勢與 JD 生成客製化自薦信與自我介紹，並【嚴格】輸出 JSON 格式。\n\n【求職者履歷摘要】\n${resume}`;
     const userPrompt = `
 【公司】: ${companyName}
 【職缺】: ${jobTitle}
@@ -166,7 +221,8 @@ ${evalSection}
   "optimizedSelfIntro": "精簡自我介紹 (約 100-200 字，台灣繁體中文)"
 }`;
 
-    const completion = await this.client.chat.completions.create({
+    return this.retryWithBackoff(async () => {
+    const completion = await this.client!.chat.completions.create({
       model: this.model,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -187,5 +243,6 @@ ${evalSection}
       coverLetter: result.data.coverLetter,
       optimizedSelfIntro: result.data.optimizedSelfIntro,
     };
+    }, `OpenRouter API 生成自薦信 ("${jobTitle}")`);
   }
 }
