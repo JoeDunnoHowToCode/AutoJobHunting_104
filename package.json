@@ -6,9 +6,13 @@
   "scripts": {
     "build": "tsc",
     "start": "ts-node src/index.ts",
+    "dry-run": "ts-node src/index.ts --dry-run",
+    "dry-run:headed": "AUTOJOB_HEADLESS=false ts-node src/index.ts --dry-run",
+    "dry-run:review": "AUTOJOB_HEADLESS=false ts-node src/index.ts --dry-run --pause-before-close",
     "login": "ts-node src/login.ts",
-    "test-ai": "ts-node src/test-multi-llm.ts",
-    "test-pipeline": "ts-node src/pipeline.spec.ts"
+    "test-ai": "ts-node src/ai-smoke.ts",
+    "test-pipeline": "ts-node src/pipeline.spec.ts",
+    "test-application-action": "ts-node src/application-action.spec.ts"
   },
   "dependencies": {
     "@google/genai": "latest",

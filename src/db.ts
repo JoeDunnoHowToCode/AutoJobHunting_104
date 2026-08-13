@@ -25,14 +25,24 @@ interface ApplyRecordData {
   [date: string]: DailyRecords;
 }
 
+export interface JobDatabaseOptions {
+  /**
+   * Allows a run to use historical records for de-duplication without ever
+   * creating or modifying applyRecord.json. Used by the pre-submit dry-run.
+   */
+  readOnly?: boolean;
+}
+
 export class JobDatabase {
   private data: ApplyRecordData = {};
   private currentApplyId: number = 0;
   private processedMap = new Map<string, { hasApplied: boolean; latestSkippedDate?: string }>();
   private readonly dbPath: string;
+  private readonly readOnly: boolean;
 
-  constructor(dbPath: string = config.dbPath) {
+  constructor(dbPath: string = config.dbPath, options: JobDatabaseOptions = {}) {
     this.dbPath = dbPath;
+    this.readOnly = options.readOnly ?? false;
     this.load();
   }
 
@@ -89,7 +99,7 @@ export class JobDatabase {
              }
              this.data[dateStr][record.status].push(record);
            }
-           this.save();
+           if (!this.readOnly) this.save();
         } else {
            this.data = parsed;
            // Find max applyId
@@ -104,7 +114,7 @@ export class JobDatabase {
         this.currentApplyId = maxApplyId;
       } else {
         this.data = {};
-        this.save();
+        if (!this.readOnly) this.save();
       }
       this.rebuildIndex();
     } catch (error) {
@@ -125,6 +135,9 @@ export class JobDatabase {
   }
 
   public getNextApplyId(): number {
+    if (this.readOnly) {
+      throw new Error('JobDatabase is read-only; dry-run must not allocate apply IDs.');
+    }
     this.currentApplyId++;
     return this.currentApplyId;
   }
@@ -143,6 +156,9 @@ export class JobDatabase {
   }
 
   public addRecord(record: JobRecord): void {
+    if (this.readOnly) {
+      throw new Error('JobDatabase is read-only; dry-run records must not be persisted.');
+    }
     const today = this.getTodayDateString();
     if (!this.data[today]) {
       this.data[today] = { applied: [], skipped: [], failed: [] };
@@ -165,5 +181,3 @@ export class JobDatabase {
     return this.data[today] || { applied: [], skipped: [], failed: [] };
   }
 }
-
-export const db = new JobDatabase();

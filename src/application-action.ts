@@ -1,0 +1,76 @@
+import {
+  ApplicationPreflightOptions,
+  ApplicationPreflightResult,
+  JobPlatform,
+} from './platforms/base';
+
+export type RunMode = 'live' | 'dry-run';
+
+export interface PipelineLimits {
+  jdConcurrency: number;
+  aiConcurrency: number;
+  maxApplyQueueSize: number;
+  resumeApplyQueueSize: number;
+  maxInFlightJobs: number;
+}
+
+/** A dry-run is a single, serial observation rather than a batch process. */
+export const DRY_RUN_PIPELINE_LIMITS: Readonly<PipelineLimits> = {
+  jdConcurrency: 1,
+  aiConcurrency: 1,
+  maxApplyQueueSize: 1,
+  resumeApplyQueueSize: 0,
+  maxInFlightJobs: 1,
+};
+
+export function getRuntimePipelineLimits(
+  mode: RunMode,
+  liveLimits: Readonly<PipelineLimits>,
+): Readonly<PipelineLimits> {
+  return mode === 'dry-run' ? DRY_RUN_PIPELINE_LIMITS : liveLimits;
+}
+
+export type ApplicationActionResult =
+  | {
+      type: 'preflight';
+      result: ApplicationPreflightResult;
+    }
+  | {
+      type: 'submission';
+      submitted: boolean;
+    };
+
+export interface ApplicationActionOptions {
+  preflight?: ApplicationPreflightOptions;
+}
+
+/**
+ * The only entry point from the pipeline into an application action.
+ *
+ * Keeping the mode split here is deliberate: the dry-run branch has no
+ * reference to `applyToJob`, so it cannot click a final submit button through
+ * a future caller mistake.
+ */
+export async function executeApplicationAction(
+  mode: RunMode,
+  platform: JobPlatform,
+  jobId: string,
+  coverLetter: string,
+  options: ApplicationActionOptions = {},
+): Promise<ApplicationActionResult> {
+  if (mode === 'dry-run') {
+    return {
+      type: 'preflight',
+      result: await platform.preflightApplication(jobId, options.preflight),
+    };
+  }
+
+  return {
+    type: 'submission',
+    submitted: await platform.applyToJob(jobId, coverLetter),
+  };
+}
+
+export function resolveRunMode(args: readonly string[] = process.argv): RunMode {
+  return args.includes('--dry-run') ? 'dry-run' : 'live';
+}

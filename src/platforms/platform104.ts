@@ -1,6 +1,49 @@
-import { Page } from 'playwright';
-import { JobPlatform, ScrapedJob } from './base';
+import { Locator, Page } from 'playwright';
+import * as readline from 'readline';
+import {
+  ApplicationPreflightOptions,
+  ApplicationPreflightResult,
+  JobPlatform,
+  ScrapedJob,
+} from './base';
 import { config } from '../config';
+
+export type PlatformAccessErrorCode = 'SESSION_EXPIRED' | 'PLATFORM_LIMITED';
+
+/** A stop-the-pipeline condition, never something the automation should bypass. */
+export class PlatformAccessError extends Error {
+  public readonly code: PlatformAccessErrorCode;
+
+  constructor(code: PlatformAccessErrorCode, message: string) {
+    super(message);
+    this.name = 'PlatformAccessError';
+    this.code = code;
+  }
+}
+
+type ApplicationFormErrorCode = 'ALREADY_APPLIED' | 'JOB_UNAVAILABLE' | 'FORM_UNAVAILABLE';
+
+class ApplicationFormError extends Error {
+  public readonly code: ApplicationFormErrorCode;
+
+  constructor(code: ApplicationFormErrorCode, message: string) {
+    super(message);
+    this.name = 'ApplicationFormError';
+    this.code = code;
+  }
+}
+
+interface ApplicationFormSession {
+  sourcePage: Page;
+  targetPage: Page;
+  popupOpened: boolean;
+}
+
+interface FormInspection {
+  textarea: Locator | null;
+  submitButton: Locator | null;
+  result: NonNullable<ApplicationPreflightResult['form']>;
+}
 
 const AREA_MAP: Record<string, string> = {
   '台北市': '6001001000',
@@ -29,8 +72,232 @@ const AREA_MAP: Record<string, string> = {
   '連江縣': '6001023000'
 };
 
+const LOGIN_URL_MARKERS = ['signin.104.com.tw', 'login.104.com.tw'];
+const LOGIN_TEXT_MARKERS = ['Log in to 104', '登入/註冊', 'Not a member yet'];
+const LIMIT_TEXT_MARKERS = [
+  '操作過於頻繁',
+  '請稍後再試',
+  '存取過於頻繁',
+  '請完成驗證',
+  '安全驗證',
+  '請輸入驗證碼',
+  '圖形驗證',
+  '人機驗證',
+  'reCAPTCHA',
+  'Access Denied',
+  'Too Many Requests',
+  '服務暫時無法使用',
+];
+const JOB_UNAVAILABLE_TEXT_MARKERS = ['此職缺已關閉', '職缺已關閉', '已停止徵才', '找不到此職缺'];
+const ALREADY_APPLIED_TEXT_MARKERS = ['您已應徵此職缺', '已應徵此職缺', '您已投遞此職缺'];
+
 export class Platform104 extends JobPlatform {
   public readonly platformName = '104';
+
+  private async getBodyText(page: Page): Promise<string> {
+    return page.locator('body').innerText().catch(() => '');
+  }
+
+  private async getAccessIssue(page: Page, requireAuthenticatedSession: boolean): Promise<PlatformAccessError | null> {
+    const currentUrl = page.url();
+    if (LOGIN_URL_MARKERS.some(marker => currentUrl.includes(marker))) {
+      return new PlatformAccessError('SESSION_EXPIRED', '104 導向登入頁面，登入 Session 已失效。');
+    }
+
+    const bodyText = await this.getBodyText(page);
+    if (LIMIT_TEXT_MARKERS.some(marker => bodyText.includes(marker))) {
+      return new PlatformAccessError('PLATFORM_LIMITED', '104 顯示驗證、頻率或存取限制頁面；已停止操作。');
+    }
+
+    // Public search pages normally include a "登入/註冊" header. Only use text
+    // markers as a login signal on a page that is expected to be authenticated.
+    if (requireAuthenticatedSession && LOGIN_TEXT_MARKERS.some(marker => bodyText.includes(marker))) {
+      return new PlatformAccessError('SESSION_EXPIRED', '104 顯示登入畫面，登入 Session 已失效。');
+    }
+
+    return null;
+  }
+
+  private async assertPageAccessible(page: Page, requireAuthenticatedSession: boolean): Promise<void> {
+    const issue = await this.getAccessIssue(page, requireAuthenticatedSession);
+    if (issue) throw issue;
+  }
+
+  private assertNavigationResponse(
+    status: number | undefined,
+    context: 'search' | 'job' | 'application',
+  ): void {
+    if (status === undefined || status < 400) return;
+
+    if (context === 'job' && status === 404) {
+      throw new ApplicationFormError('JOB_UNAVAILABLE', '104 回傳職缺不存在或已關閉。');
+    }
+
+    // A public 104 job page can also return 403 for an access policy or rate
+    // limit, so only 401 is treated as an authentication failure. We stop for
+    // either condition and never attempt a workaround.
+    const code: PlatformAccessErrorCode = status === 401 ? 'SESSION_EXPIRED' : 'PLATFORM_LIMITED';
+    throw new PlatformAccessError(code, `104 回傳 HTTP ${status}；已停止操作以避免重試受限頁面。`);
+  }
+
+  private async findFirstVisible(candidates: Locator[]): Promise<Locator | null> {
+    for (const candidate of candidates) {
+      const count = await candidate.count();
+      for (let index = 0; index < count; index++) {
+        const item = candidate.nth(index);
+        if (await item.isVisible().catch(() => false)) return item;
+      }
+    }
+    return null;
+  }
+
+  private applyButtonCandidates(page: Page): Locator[] {
+    return [
+      page.locator('[data-v-e3fvojuuftu="apply-button"]'),
+      page.locator('.apply-button__button'),
+      page.locator('.apply-button'),
+      page.getByRole('link', { name: '我要應徵', exact: true }),
+      page.getByRole('button', { name: '我要應徵', exact: true }),
+      page.getByText('我要應徵', { exact: true }),
+    ];
+  }
+
+  private textareaCandidates(page: Page): Locator[] {
+    return [
+      page.locator('textarea[name="recommend"]'),
+      page.locator('textarea#recommend'),
+      page.locator('textarea[placeholder*="推薦"]'),
+      page.locator('textarea'),
+    ];
+  }
+
+  private submitButtonCandidates(page: Page): Locator[] {
+    return [
+      page.getByRole('button', { name: '確認應徵', exact: true }),
+      page.getByRole('button', { name: '確認送出', exact: true }),
+      page.getByRole('button', { name: '送出應徵', exact: true }),
+      page.getByText('確認送出', { exact: true }),
+      page.getByText('確認應徵', { exact: true }),
+    ];
+  }
+
+  private async inspectForm(page: Page): Promise<FormInspection> {
+    const textarea = await this.findFirstVisible(this.textareaCandidates(page));
+    const submitButton = await this.findFirstVisible(this.submitButtonCandidates(page));
+    const checkboxes = page.locator('input[type="checkbox"]');
+    const checkboxCount = await checkboxes.count();
+    let visibleCheckboxCount = 0;
+    let uncheckedCheckboxCount = 0;
+
+    for (let index = 0; index < checkboxCount; index++) {
+      const checkbox = checkboxes.nth(index);
+      if (await checkbox.isVisible().catch(() => false)) {
+        visibleCheckboxCount++;
+        if (!(await checkbox.isChecked().catch(() => false))) uncheckedCheckboxCount++;
+      }
+    }
+
+    const textareaFound = textarea !== null;
+    const submitButtonFound = submitButton !== null;
+    const textareaVisible = textareaFound && await textarea!.isVisible().catch(() => false);
+    const textareaEnabled = textareaFound && await textarea!.isEnabled().catch(() => false);
+    const submitButtonVisible = submitButtonFound && await submitButton!.isVisible().catch(() => false);
+    const submitButtonEnabled = submitButtonFound && await submitButton!.isEnabled().catch(() => false);
+
+    return {
+      textarea,
+      submitButton,
+      result: {
+        textareaFound,
+        textareaVisible,
+        textareaEnabled,
+        textareaMaxLength: textareaFound ? await textarea!.getAttribute('maxlength') : null,
+        submitButtonFound,
+        submitButtonVisible,
+        submitButtonEnabled,
+        visibleCheckboxCount,
+        uncheckedCheckboxCount,
+      },
+    };
+  }
+
+  private async closeApplicationForm(session: ApplicationFormSession | null): Promise<void> {
+    if (!session) return;
+    try {
+      if (session.popupOpened && !session.targetPage.isClosed()) await session.targetPage.close();
+    } finally {
+      if (!session.sourcePage.isClosed()) await session.sourcePage.close();
+    }
+  }
+
+  private async pauseForHumanReview(): Promise<void> {
+    if (!process.stdin.isTTY) {
+      console.warn('[Dry-run] --pause-before-close 需要互動式終端機；將直接關閉唯讀表單。');
+      return;
+    }
+
+    const terminal = readline.createInterface({ input: process.stdin, output: process.stdout });
+    await new Promise<void>(resolve => {
+      terminal.question('[Dry-run] 表單停在送出前。請人工檢查；按 Enter 關閉，不會送出：', () => {
+        terminal.close();
+        resolve();
+      });
+    });
+  }
+
+  private async openApplicationForm(jobId: string): Promise<ApplicationFormSession> {
+    const sourcePage = await this.getApplyPage();
+    let targetPage = sourcePage;
+    let popupOpened = false;
+
+    try {
+      const response = await sourcePage.goto(`https://www.104.com.tw/job/${jobId}`, { waitUntil: 'domcontentloaded' });
+      this.assertNavigationResponse(response?.status(), 'job');
+      await sourcePage.waitForTimeout(2000);
+      await this.assertPageAccessible(sourcePage, true);
+
+      const sourceText = await this.getBodyText(sourcePage);
+      if (JOB_UNAVAILABLE_TEXT_MARKERS.some(marker => sourceText.includes(marker))) {
+        throw new ApplicationFormError('JOB_UNAVAILABLE', '職缺已關閉或無法開啟應徵表單。');
+      }
+      if (ALREADY_APPLIED_TEXT_MARKERS.some(marker => sourceText.includes(marker))) {
+        throw new ApplicationFormError('ALREADY_APPLIED', '104 顯示此職缺已經投遞。');
+      }
+
+      const applyButton = await this.findFirstVisible(this.applyButtonCandidates(sourcePage));
+      if (!applyButton) {
+        throw new ApplicationFormError('FORM_UNAVAILABLE', '找不到「我要應徵」按鈕；可能是職缺狀態或頁面結構已變更。');
+      }
+
+      const popupPromise = sourcePage.waitForEvent('popup', { timeout: 3000 }).catch(() => null);
+      await applyButton.click();
+      const popup = await popupPromise;
+
+      if (popup) {
+        targetPage = popup;
+        popupOpened = true;
+        await targetPage.waitForLoadState('domcontentloaded');
+        await targetPage.waitForTimeout(1500);
+      } else {
+        // 104 sometimes opens the form in the current page or a modal.
+        await sourcePage.waitForTimeout(2500);
+      }
+
+      await this.assertPageAccessible(targetPage, true);
+      const targetText = await this.getBodyText(targetPage);
+      if (JOB_UNAVAILABLE_TEXT_MARKERS.some(marker => targetText.includes(marker))) {
+        throw new ApplicationFormError('JOB_UNAVAILABLE', '104 顯示職缺已關閉。');
+      }
+      if (ALREADY_APPLIED_TEXT_MARKERS.some(marker => targetText.includes(marker))) {
+        throw new ApplicationFormError('ALREADY_APPLIED', '104 顯示此職缺已經投遞。');
+      }
+
+      return { sourcePage, targetPage, popupOpened };
+    } catch (error) {
+      await this.closeApplicationForm({ sourcePage, targetPage, popupOpened });
+      throw error;
+    }
+  }
 
   public async searchJobs(page: Page, keyword: string, pageNum: number = 1): Promise<ScrapedJob[]> {
     console.log(`Searching for jobs on 104 with keyword: "${keyword}", Page: ${pageNum}...`);
@@ -46,10 +313,12 @@ export class Platform104 extends JobPlatform {
       }
     }
     
-    await page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
+    const response = await page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
+    this.assertNavigationResponse(response?.status(), 'search');
     
     // Robust 8-second wait to ensure background thread resources finish rendering Vue Virtual Scroller
     await page.waitForTimeout(8000); 
+    await this.assertPageAccessible(page, false);
 
     const title = await page.title();
     console.log(`[Debug Search] Page Title: "${title}"`);
@@ -136,8 +405,15 @@ export class Platform104 extends JobPlatform {
 
   public async getJobDescription(page: Page, jobUrl: string): Promise<{ jdText: string, location: string }> {
     console.log(`Navigating to job details: ${jobUrl}...`);
-    await page.goto(jobUrl, { waitUntil: 'domcontentloaded' });
+    const response = await page.goto(jobUrl, { waitUntil: 'domcontentloaded' });
+    this.assertNavigationResponse(response?.status(), 'job');
     await page.waitForTimeout(2000);
+    await this.assertPageAccessible(page, false);
+
+    const pageText = await this.getBodyText(page);
+    if (JOB_UNAVAILABLE_TEXT_MARKERS.some(marker => pageText.includes(marker))) {
+      throw new ApplicationFormError('JOB_UNAVAILABLE', '職缺已關閉或不存在。');
+    }
 
     const selectors = [
       '.job-description',
@@ -187,164 +463,127 @@ export class Platform104 extends JobPlatform {
 
   public async verifyLogin(): Promise<boolean> {
     console.log('正在驗證 104 登入 Session 是否有效...');
+    let page: Page | null = null;
     try {
-      const page = await this.getApplyPage();
-      await page.goto('https://pda.104.com.tw/my104/index', { waitUntil: 'domcontentloaded' });
+      page = await this.getApplyPage();
+      const response = await page.goto('https://pda.104.com.tw/my104/index', { waitUntil: 'domcontentloaded' });
+      this.assertNavigationResponse(response?.status(), 'application');
       await page.waitForTimeout(3000);
-
-      const currentUrl = page.url();
-      const bodyText = await page.locator('body').innerText();
-
-      await page.close();
-
-      if (currentUrl.includes('signin.104.com.tw') || currentUrl.includes('login.104.com.tw')) {
-        return false;
-      }
-      if (bodyText.includes('登入/註冊') || bodyText.includes('Log in now') || bodyText.includes('Not a member yet')) {
-        return false;
-      }
-
-      return true;
+      const issue = await this.getAccessIssue(page, true);
+      return issue === null;
     } catch (err) {
       console.error('驗證 104 登入 Session 時發生例外:', err);
       return false;
+    } finally {
+      if (page) await this.closePage(page);
+    }
+  }
+
+  /**
+   * Opens the real form and observes its state without touching user input.
+   * This method does not check boxes, fill text, or click the final submit
+   * control. It is intentionally a separate API from `applyToJob`.
+   */
+  public async preflightApplication(
+    jobId: string,
+    options: ApplicationPreflightOptions = {},
+  ): Promise<ApplicationPreflightResult> {
+    let session: ApplicationFormSession | null = null;
+    try {
+      console.log(`[Dry-run] 開啟 104 應徵表單進行唯讀檢查，jobId: ${jobId}...`);
+      session = await this.openApplicationForm(jobId);
+      const inspection = await this.inspectForm(session.targetPage);
+
+      if (!inspection.result.textareaFound || !inspection.result.submitButtonFound) {
+        return {
+          status: 'form_unavailable',
+          message: '表單缺少自薦信欄位或最終送出控制項，已停止且未修改表單。',
+          form: inspection.result,
+        };
+      }
+      if (!inspection.result.textareaVisible || !inspection.result.textareaEnabled ||
+          !inspection.result.submitButtonVisible || !inspection.result.submitButtonEnabled) {
+        return {
+          status: 'form_unavailable',
+          message: '表單的重要控制項不可見或不可用，已停止且未修改表單。',
+          form: inspection.result,
+        };
+      }
+
+      const result: ApplicationPreflightResult = {
+        status: 'ready_for_review',
+        message: inspection.result.uncheckedCheckboxCount > 0
+          ? '已到達送出前表單；偵測到未勾選選項，未自動變更任何同意或偏好設定。'
+          : '已到達送出前表單；未填入自薦信、未變更選項、未點擊最終送出。',
+        form: inspection.result,
+      };
+      if (options.pauseBeforeClose) await this.pauseForHumanReview();
+      return result;
+    } catch (err: any) {
+      if (err instanceof PlatformAccessError) {
+        return {
+          status: err.code === 'SESSION_EXPIRED' ? 'login_required' : 'platform_limited',
+          message: err.message,
+        };
+      }
+      if (err instanceof ApplicationFormError) {
+        const status = err.code === 'ALREADY_APPLIED'
+          ? 'already_applied'
+          : err.code === 'JOB_UNAVAILABLE'
+            ? 'job_unavailable'
+            : 'form_unavailable';
+        return { status, message: err.message };
+      }
+      console.error('Dry-run 應徵表單檢查失敗:', err);
+      return {
+        status: 'error',
+        message: `表單檢查例外：${err instanceof Error ? err.message : String(err)}`,
+      };
+    } finally {
+      await this.closeApplicationForm(session);
     }
   }
 
   public async applyToJob(jobId: string, coverLetter: string): Promise<boolean> {
     console.log(`Opening application page in authenticated context for jobId: ${jobId}...`);
-    const page = await this.getApplyPage();
-    const jobUrl = `https://www.104.com.tw/job/${jobId}`;
-
-    let targetPage: Page = page;
-    let popupOpened = false;
+    let session: ApplicationFormSession | null = null;
 
     try {
-      await page.goto(jobUrl, { waitUntil: 'domcontentloaded' });
-      await page.waitForTimeout(3000);
+      session = await this.openApplicationForm(jobId);
+      const inspection = await this.inspectForm(session.targetPage);
 
-      const applyButton = page.locator('[data-v-e3fvojuuftu="apply-button"]')
-        .or(page.locator('.apply-button__button'))
-        .or(page.locator('.apply-button'))
-        .or(page.getByRole('link', { name: '我要應徵' }))
-        .or(page.getByRole('button', { name: '我要應徵' }))
-        .or(page.getByText('我要應徵'))
-        .first();
-
-      if (await applyButton.count() === 0) {
-        console.error('Could not find the "我要應徵" button on page.');
-        await page.close();
+      if (!inspection.textarea || !inspection.submitButton ||
+          !inspection.result.textareaVisible || !inspection.result.textareaEnabled ||
+          !inspection.result.submitButtonVisible || !inspection.result.submitButtonEnabled) {
+        console.error('應徵表單缺少可用的自薦信欄位或最終送出按鈕。');
         return false;
       }
 
-      const popupPromise = page.waitForEvent('popup', { timeout: 3000 }).catch(() => null);
-      await applyButton.click();
-      
-      const popup = await popupPromise;
-      if (popup) {
-        console.log('Application form opened in a new tab.');
-        targetPage = popup;
-        popupOpened = true;
-        await targetPage.waitForLoadState('domcontentloaded');
-        await targetPage.waitForTimeout(2000);
-      } else {
-        console.log('No new tab opened. Operating on the page modal. Waiting 4 seconds...');
-        await page.waitForTimeout(4000);
-      }
-
-      // Check if targetPage is showing a login modal/page instead of application form
-      const bodyText = await targetPage.locator('body').innerText();
-      if (
-        targetPage.url().includes('signin.104.com.tw') ||
-        targetPage.url().includes('login.104.com.tw') ||
-        bodyText.includes('Log in to 104') ||
-        bodyText.includes('登入/註冊') ||
-        bodyText.includes('Not a member yet')
-      ) {
-        console.error('[重大錯誤] 偵測到 104 登入狀態已過期 (出現登入畫面)！');
-        if (popupOpened && !targetPage.isClosed()) await targetPage.close();
-        await page.close();
-        throw new Error('SESSION_EXPIRED');
-      }
-
-      const checkboxes = await targetPage.locator('input[type="checkbox"]').all();
-      for (const cb of checkboxes) {
-        const isVisible = await cb.isVisible();
-        if (isVisible && !(await cb.isChecked())) {
-          console.log('Checking required agreement checkbox...');
-          await cb.check({ force: true });
-        }
-      }
-
-      const textarea = targetPage.locator('textarea[name="recommend"]')
-        .or(targetPage.locator('textarea#recommend'))
-        .or(targetPage.locator('textarea[placeholder*="推薦"]'))
-        .or(targetPage.locator('textarea'))
-        .first();
-
-      if (await textarea.count() === 0) {
-        console.error('Could not find the Cover Letter textarea.');
-        if (popupOpened) await targetPage.close();
-        await page.close();
+      // Checkbox meanings are platform-controlled. Some visible options grant
+      // marketing consent or change resume visibility, so never force-check
+      // them. A live run stops for review instead.
+      if (inspection.result.uncheckedCheckboxCount > 0) {
+        console.error(`表單有 ${inspection.result.uncheckedCheckboxCount} 個未勾選選項；為避免變更同意或偏好設定，未自動送出。`);
         return false;
       }
 
       console.log('Writing cover letter...');
-      await textarea.click();
-      await textarea.fill('');
-      await textarea.fill(coverLetter);
-      await targetPage.waitForTimeout(1000);
-
-      const submitButton = targetPage.getByRole('button', { name: '確認應徵' })
-        .or(targetPage.getByRole('button', { name: '確認送出' }))
-        .or(targetPage.getByRole('button', { name: '送出應徵' }))
-        .or(targetPage.getByText('確認送出'))
-        .or(targetPage.getByText('確認應徵'))
-        .first();
-
-      if (await submitButton.count() === 0) {
-        console.error('Could not find final Submit button.');
-        if (popupOpened) await targetPage.close();
-        await page.close();
-        return false;
-      }
+      await inspection.textarea.fill(coverLetter);
+      await session.targetPage.waitForTimeout(1000);
 
       console.log('Submitting application...');
-      await submitButton.click();
-      await targetPage.waitForTimeout(4000);
+      await inspection.submitButton.click();
+      await session.targetPage.waitForTimeout(4000);
 
-      const successIndicators = ['應徵完成', '成功', '您已應徵', '送出成功', '已應徵'];
-      let isSuccess = false;
-      
-      const resultText = await targetPage.locator('body').innerText();
-      for (const indicator of successIndicators) {
-        if (resultText.includes(indicator)) {
-          isSuccess = true;
-          break;
-        }
-      }
-
-      if (popupOpened && targetPage.isClosed()) {
-        isSuccess = true;
-      }
-
-      if (popupOpened && !targetPage.isClosed()) {
-        await targetPage.close();
-      }
-      
-      await page.close();
-      return isSuccess;
-
+      const resultText = await this.getBodyText(session.targetPage);
+      const successIndicators = ['應徵完成', '應徵已送出', '送出應徵成功', '您已成功應徵'];
+      return successIndicators.some(indicator => resultText.includes(indicator));
     } catch (err: any) {
-      if (err?.message === 'SESSION_EXPIRED') {
-        throw err;
-      }
+      if (err instanceof PlatformAccessError) throw err;
       console.error('Error during job application:', err);
-      if (popupOpened && !targetPage.isClosed()) {
-        await targetPage.close();
-      }
-      await page.close();
       return false;
+    } finally {
+      await this.closeApplicationForm(session);
     }
   }
 }

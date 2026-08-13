@@ -10,6 +10,41 @@ export interface ScrapedJob {
   platform: string;
 }
 
+/**
+ * Result of opening an application form without changing any form values or
+ * submitting it.  This is intentionally separate from `applyToJob` so a
+ * preview path cannot accidentally reach the final-submit implementation.
+ */
+export type ApplicationPreflightStatus =
+  | 'ready_for_review'
+  | 'login_required'
+  | 'already_applied'
+  | 'job_unavailable'
+  | 'form_unavailable'
+  | 'platform_limited'
+  | 'error';
+
+export interface ApplicationPreflightResult {
+  status: ApplicationPreflightStatus;
+  message: string;
+  form?: {
+    textareaFound: boolean;
+    textareaVisible: boolean;
+    textareaEnabled: boolean;
+    textareaMaxLength: string | null;
+    submitButtonFound: boolean;
+    submitButtonVisible: boolean;
+    submitButtonEnabled: boolean;
+    visibleCheckboxCount: number;
+    uncheckedCheckboxCount: number;
+  };
+}
+
+export interface ApplicationPreflightOptions {
+  /** Keep a visible form open for an explicit human inspection, then close it. */
+  pauseBeforeClose?: boolean;
+}
+
 export abstract class JobPlatform {
   protected searchContext: BrowserContext | null = null;
   protected applyContext: BrowserContext | null = null;
@@ -31,7 +66,6 @@ export abstract class JobPlatform {
 
     this.searchContext = await browser.newContext({
       viewport: { width: 1280, height: 800 },
-      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       locale: 'zh-TW',
       timezoneId: 'Asia/Taipei'
     });
@@ -66,7 +100,6 @@ export abstract class JobPlatform {
     
     const contextOptions: any = {
       viewport: { width: 1280, height: 800 },
-      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       locale: 'zh-TW',
       timezoneId: 'Asia/Taipei'
     };
@@ -95,6 +128,17 @@ export abstract class JobPlatform {
 
   public abstract searchJobs(page: Page, keyword: string, pageNum?: number): Promise<ScrapedJob[]>;
   public abstract getJobDescription(page: Page, jobUrl: string): Promise<{ jdText: string, location: string }>;
+
+  /**
+   * Opens and inspects the application form without checking boxes, filling
+   * text, or clicking its final submit control.
+   */
+  public abstract preflightApplication(
+    jobId: string,
+    options?: ApplicationPreflightOptions,
+  ): Promise<ApplicationPreflightResult>;
+
+  /** Performs a real submission. Never call this from a dry-run. */
   public abstract applyToJob(jobId: string, coverLetter: string): Promise<boolean>;
   public abstract verifyLogin(): Promise<boolean>;
 }

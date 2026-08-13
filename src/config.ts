@@ -48,6 +48,16 @@ export const pipelineConfig = {
   maxInFlightJobs: 8,
 } as const;
 
+function parseBooleanEnvironment(value: string | undefined): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  console.warn('AUTOJOB_HEADLESS must be "true" or "false"; ignoring invalid value.');
+  return undefined;
+}
+
+const environmentHeadless = parseBooleanEnvironment(process.env.AUTOJOB_HEADLESS);
+
 export const config: Config = {
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   openaiApiKey: process.env.OPENAI_API_KEY || '',
@@ -60,7 +70,10 @@ export const config: Config = {
   authStatePath: path.resolve(rootDir, 'auth_state.json'),
   dbPath: path.resolve(rootDir, 'applyRecord.json'),
   applyLimitPerRun: settings.applyLimitPerRun ?? 10,
-  headless: settings.headless ?? true,
+  // Intended for one-off, visible manual validation without modifying a
+  // user's ignored settings.json. This does not attempt to alter browser
+  // fingerprinting or bypass platform restrictions.
+  headless: environmentHeadless ?? settings.headless ?? true,
   blacklistKeywords: settings.blacklistKeywords || [],
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
   telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
