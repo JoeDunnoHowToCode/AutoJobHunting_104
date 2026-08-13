@@ -9,10 +9,13 @@
     "dry-run": "ts-node src/index.ts --dry-run",
     "dry-run:headed": "AUTOJOB_HEADLESS=false ts-node src/index.ts --dry-run",
     "dry-run:review": "AUTOJOB_HEADLESS=false ts-node src/index.ts --dry-run --pause-before-close",
+    "diagnose-104:headed": "AUTOJOB_HEADLESS=false ts-node src/diagnose-104.ts",
+    "diagnose-104:job": "AUTOJOB_HEADLESS=false ts-node src/diagnose-104.ts --job-id",
     "login": "ts-node src/login.ts",
     "test-ai": "ts-node src/ai-smoke.ts",
     "test-pipeline": "ts-node src/pipeline.spec.ts",
-    "test-application-action": "ts-node src/application-action.spec.ts"
+    "test-application-action": "ts-node src/application-action.spec.ts",
+    "test-104-platform": "ts-node src/platforms/platform104.spec.ts"
   },
   "dependencies": {
     "@google/genai": "latest",

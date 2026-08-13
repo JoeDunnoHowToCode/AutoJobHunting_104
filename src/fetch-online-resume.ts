@@ -1,5 +1,5 @@
-import { chromium } from 'playwright';
 import { config } from './config';
+import { launchConfiguredBrowser } from './browser';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -13,7 +13,7 @@ async function fetchAndSaveOnlineResume() {
     process.exit(1);
   }
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchConfiguredBrowser();
   const context = await browser.newContext({ storageState: config.authStatePath });
   const page = await context.newPage();
 

@@ -16,7 +16,10 @@ export interface Config {
   authStatePath: string;
   dbPath: string;
   applyLimitPerRun: number;
+  /** Used only by non-104 auxiliary tools; 104 browser workflows are always visible. */
   headless: boolean;
+  /** Use the installed stable Chrome by default; set AUTOJOB_BROWSER_CHANNEL=playwright only for local diagnostics. */
+  browserChannel?: 'chrome';
   blacklistKeywords: string[];
   telegramBotToken: string;
   telegramChatId: string;
@@ -58,6 +61,16 @@ function parseBooleanEnvironment(value: string | undefined): boolean | undefined
 
 const environmentHeadless = parseBooleanEnvironment(process.env.AUTOJOB_HEADLESS);
 
+function resolveBrowserChannel(value: string | undefined): 'chrome' | undefined {
+  // 104 returned a bare 403 for the bundled Chromium while the same machine's
+  // normal Chrome could read the public job page. Use Playwright's supported
+  // Chrome channel rather than altering browser fingerprints or headers.
+  if (value === undefined || value === '' || value === 'chrome') return 'chrome';
+  if (value === 'playwright') return undefined;
+  console.warn('AUTOJOB_BROWSER_CHANNEL must be "chrome" or "playwright"; using Chrome.');
+  return 'chrome';
+}
+
 export const config: Config = {
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   openaiApiKey: process.env.OPENAI_API_KEY || '',
@@ -74,6 +87,7 @@ export const config: Config = {
   // user's ignored settings.json. This does not attempt to alter browser
   // fingerprinting or bypass platform restrictions.
   headless: environmentHeadless ?? settings.headless ?? true,
+  browserChannel: resolveBrowserChannel(process.env.AUTOJOB_BROWSER_CHANNEL),
   blacklistKeywords: settings.blacklistKeywords || [],
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
   telegramChatId: process.env.TELEGRAM_CHAT_ID || '',

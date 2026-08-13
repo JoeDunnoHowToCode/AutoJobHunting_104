@@ -8,22 +8,67 @@ import {
 } from './base';
 import { config } from '../config';
 
-export type PlatformAccessErrorCode = 'SESSION_EXPIRED' | 'PLATFORM_LIMITED';
+export type PlatformAccessErrorCode = 'SESSION_EXPIRED' | 'PLATFORM_LIMITED' | 'PAGE_UNRECOGNIZED';
+export type PlatformRequestStage = 'login' | 'search' | 'job' | 'application';
+export type PlatformAccessClassification =
+  | 'authentication_required'
+  | 'http_forbidden'
+  | 'rate_limited'
+  | 'challenge_required'
+  | 'service_unavailable'
+  | 'navigation_failed'
+  | 'page_unrecognized';
+
+/**
+ * Safe-to-log navigation metadata. Query strings, response bodies, cookies,
+ * and request headers are deliberately excluded.
+ */
+export interface PlatformNavigationDiagnostic {
+  stage: PlatformRequestStage;
+  classification: PlatformAccessClassification;
+  status?: number;
+  path: string;
+  elapsedMs?: number;
+  markerIds: string[];
+}
+
+function safePath(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return 'unknown';
+  }
+}
+
+function describeDiagnostic(diagnostic: PlatformNavigationDiagnostic): string {
+  const fields = [
+    `stage=${diagnostic.stage}`,
+    `classification=${diagnostic.classification}`,
+    `path=${diagnostic.path}`,
+    diagnostic.status === undefined ? undefined : `status=${diagnostic.status}`,
+    diagnostic.elapsedMs === undefined ? undefined : `elapsedMs=${diagnostic.elapsedMs}`,
+    diagnostic.markerIds.length === 0 ? undefined : `markers=${diagnostic.markerIds.join(',')}`,
+  ].filter((value): value is string => Boolean(value));
+  return `[104 diagnostic] ${fields.join(' ')} `;
+}
 
 /** A stop-the-pipeline condition, never something the automation should bypass. */
 export class PlatformAccessError extends Error {
   public readonly code: PlatformAccessErrorCode;
+  public readonly diagnostic: PlatformNavigationDiagnostic;
 
-  constructor(code: PlatformAccessErrorCode, message: string) {
+  constructor(code: PlatformAccessErrorCode, message: string, diagnostic: PlatformNavigationDiagnostic) {
     super(message);
     this.name = 'PlatformAccessError';
     this.code = code;
+    this.diagnostic = diagnostic;
   }
 }
 
 type ApplicationFormErrorCode = 'ALREADY_APPLIED' | 'JOB_UNAVAILABLE' | 'FORM_UNAVAILABLE';
 
-class ApplicationFormError extends Error {
+export class ApplicationFormError extends Error {
   public readonly code: ApplicationFormErrorCode;
 
   constructor(code: ApplicationFormErrorCode, message: string) {
@@ -74,22 +119,63 @@ const AREA_MAP: Record<string, string> = {
 
 const LOGIN_URL_MARKERS = ['signin.104.com.tw', 'login.104.com.tw'];
 const LOGIN_TEXT_MARKERS = ['Log in to 104', '登入/註冊', 'Not a member yet'];
-const LIMIT_TEXT_MARKERS = [
-  '操作過於頻繁',
-  '請稍後再試',
-  '存取過於頻繁',
-  '請完成驗證',
-  '安全驗證',
-  '請輸入驗證碼',
-  '圖形驗證',
-  '人機驗證',
-  'reCAPTCHA',
-  'Access Denied',
-  'Too Many Requests',
-  '服務暫時無法使用',
+const LIMIT_TEXT_MARKERS: Array<{ id: string; text: string; classification: PlatformAccessClassification }> = [
+  { id: 'rate_limit', text: '操作過於頻繁', classification: 'rate_limited' },
+  { id: 'rate_limit', text: '存取過於頻繁', classification: 'rate_limited' },
+  { id: 'rate_limit', text: 'Too Many Requests', classification: 'rate_limited' },
+  { id: 'challenge', text: '請完成驗證', classification: 'challenge_required' },
+  { id: 'challenge', text: '安全驗證', classification: 'challenge_required' },
+  { id: 'challenge', text: '請輸入驗證碼', classification: 'challenge_required' },
+  { id: 'challenge', text: '圖形驗證', classification: 'challenge_required' },
+  { id: 'challenge', text: '人機驗證', classification: 'challenge_required' },
+  { id: 'challenge', text: 'reCAPTCHA', classification: 'challenge_required' },
+  { id: 'access_denied', text: 'Access Denied', classification: 'http_forbidden' },
+  { id: 'service_unavailable', text: '服務暫時無法使用', classification: 'service_unavailable' },
 ];
 const JOB_UNAVAILABLE_TEXT_MARKERS = ['此職缺已關閉', '職缺已關閉', '已停止徵才', '找不到此職缺'];
 const ALREADY_APPLIED_TEXT_MARKERS = ['您已應徵此職缺', '已應徵此職缺', '您已投遞此職缺'];
+
+interface NavigationClassificationInput {
+  stage: PlatformRequestStage;
+  path: string;
+  status?: number;
+  elapsedMs?: number;
+  markerIds?: string[];
+  loginRedirect?: boolean;
+  navigationFailed?: boolean;
+  expectedPageShape?: boolean;
+}
+
+/** Pure classifier: keeps diagnosis testable without sending any network traffic. */
+export function classify104Navigation(input: NavigationClassificationInput): PlatformNavigationDiagnostic | null {
+  const markerIds = [...new Set(input.markerIds ?? [])];
+  let classification: PlatformAccessClassification | null = null;
+
+  if (input.loginRedirect || input.status === 401 || markerIds.includes('login_required')) {
+    classification = 'authentication_required';
+  } else if (markerIds.includes('challenge')) {
+    classification = 'challenge_required';
+  } else if (input.status === 429 || markerIds.includes('rate_limit')) {
+    classification = 'rate_limited';
+  } else if (input.status === 403 || markerIds.includes('access_denied')) {
+    classification = 'http_forbidden';
+  } else if ((input.status !== undefined && input.status >= 500) || markerIds.includes('service_unavailable')) {
+    classification = 'service_unavailable';
+  } else if (input.navigationFailed) {
+    classification = 'navigation_failed';
+  } else if (input.stage === 'job' && input.expectedPageShape === false) {
+    classification = 'page_unrecognized';
+  }
+
+  return classification === null ? null : {
+    stage: input.stage,
+    classification,
+    status: input.status,
+    path: input.path,
+    elapsedMs: input.elapsedMs,
+    markerIds,
+  };
+}
 
 export class Platform104 extends JobPlatform {
   public readonly platformName = '104';
@@ -98,46 +184,88 @@ export class Platform104 extends JobPlatform {
     return page.locator('body').innerText().catch(() => '');
   }
 
-  private async getAccessIssue(page: Page, requireAuthenticatedSession: boolean): Promise<PlatformAccessError | null> {
-    const currentUrl = page.url();
-    if (LOGIN_URL_MARKERS.some(marker => currentUrl.includes(marker))) {
-      return new PlatformAccessError('SESSION_EXPIRED', '104 導向登入頁面，登入 Session 已失效。');
-    }
+  private toAccessError(diagnostic: PlatformNavigationDiagnostic): PlatformAccessError {
+    const code: PlatformAccessErrorCode = diagnostic.classification === 'authentication_required'
+      ? 'SESSION_EXPIRED'
+      : diagnostic.classification === 'page_unrecognized'
+        ? 'PAGE_UNRECOGNIZED'
+        : 'PLATFORM_LIMITED';
+    const messageByClassification: Record<PlatformAccessClassification, string> = {
+      authentication_required: '104 導向登入或登入 Session 已失效。',
+      http_forbidden: '104 拒絕存取此頁面（HTTP 403）。',
+      rate_limited: '104 顯示請求頻率限制。',
+      challenge_required: '104 顯示安全驗證頁面。',
+      service_unavailable: '104 服務暫時無法使用。',
+      navigation_failed: '104 頁面導覽沒有取得可驗證的主文件回應。',
+      page_unrecognized: '104 頁面缺少可辨識的職缺內容結構。',
+    };
+    return new PlatformAccessError(
+      code,
+      `${messageByClassification[diagnostic.classification]} ${describeDiagnostic(diagnostic)}`,
+      diagnostic,
+    );
+  }
 
+  private async getAccessIssue(
+    page: Page,
+    stage: PlatformRequestStage,
+    requireAuthenticatedSession: boolean,
+    expectedPageShape?: boolean,
+  ): Promise<PlatformAccessError | null> {
+    const currentUrl = page.url();
     const bodyText = await this.getBodyText(page);
-    if (LIMIT_TEXT_MARKERS.some(marker => bodyText.includes(marker))) {
-      return new PlatformAccessError('PLATFORM_LIMITED', '104 顯示驗證、頻率或存取限制頁面；已停止操作。');
-    }
+    const markerIds = LIMIT_TEXT_MARKERS
+      .filter(marker => bodyText.includes(marker.text))
+      .map(marker => marker.id);
 
     // Public search pages normally include a "登入/註冊" header. Only use text
     // markers as a login signal on a page that is expected to be authenticated.
     if (requireAuthenticatedSession && LOGIN_TEXT_MARKERS.some(marker => bodyText.includes(marker))) {
-      return new PlatformAccessError('SESSION_EXPIRED', '104 顯示登入畫面，登入 Session 已失效。');
+      markerIds.push('login_required');
     }
 
-    return null;
+    const diagnostic = classify104Navigation({
+      stage,
+      path: safePath(currentUrl),
+      markerIds,
+      loginRedirect: LOGIN_URL_MARKERS.some(marker => currentUrl.includes(marker)),
+      expectedPageShape,
+    });
+    return diagnostic ? this.toAccessError(diagnostic) : null;
   }
 
-  private async assertPageAccessible(page: Page, requireAuthenticatedSession: boolean): Promise<void> {
-    const issue = await this.getAccessIssue(page, requireAuthenticatedSession);
+  private async assertPageAccessible(
+    page: Page,
+    stage: PlatformRequestStage,
+    requireAuthenticatedSession: boolean,
+    expectedPageShape?: boolean,
+  ): Promise<void> {
+    const issue = await this.getAccessIssue(page, stage, requireAuthenticatedSession, expectedPageShape);
     if (issue) throw issue;
   }
 
   private assertNavigationResponse(
     status: number | undefined,
-    context: 'search' | 'job' | 'application',
+    stage: PlatformRequestStage,
+    page: Page,
+    startedAt: number,
   ): void {
-    if (status === undefined || status < 400) return;
-
-    if (context === 'job' && status === 404) {
+    if (stage === 'job' && (status === 404 || status === 410)) {
       throw new ApplicationFormError('JOB_UNAVAILABLE', '104 回傳職缺不存在或已關閉。');
     }
 
-    // A public 104 job page can also return 403 for an access policy or rate
-    // limit, so only 401 is treated as an authentication failure. We stop for
-    // either condition and never attempt a workaround.
-    const code: PlatformAccessErrorCode = status === 401 ? 'SESSION_EXPIRED' : 'PLATFORM_LIMITED';
-    throw new PlatformAccessError(code, `104 回傳 HTTP ${status}；已停止操作以避免重試受限頁面。`);
+    const diagnostic = classify104Navigation({
+      stage,
+      status,
+      path: safePath(page.url()),
+      elapsedMs: Date.now() - startedAt,
+      navigationFailed: status === undefined,
+    });
+    // A 403 for a JD may be a platform-level access restriction, even if a
+    // different public job was readable earlier. Stop the complete pipeline
+    // on the first such response; never turn a restriction into a scan.
+    if (diagnostic) throw this.toAccessError(diagnostic);
+    console.log(`[104 navigation] stage=${stage} status=${status} path=${safePath(page.url())} elapsedMs=${Date.now() - startedAt}`);
   }
 
   private async findFirstVisible(candidates: Locator[]): Promise<Locator | null> {
@@ -251,10 +379,11 @@ export class Platform104 extends JobPlatform {
     let popupOpened = false;
 
     try {
+      const navigationStartedAt = Date.now();
       const response = await sourcePage.goto(`https://www.104.com.tw/job/${jobId}`, { waitUntil: 'domcontentloaded' });
-      this.assertNavigationResponse(response?.status(), 'job');
+      this.assertNavigationResponse(response?.status(), 'application', sourcePage, navigationStartedAt);
       await sourcePage.waitForTimeout(2000);
-      await this.assertPageAccessible(sourcePage, true);
+      await this.assertPageAccessible(sourcePage, 'application', true);
 
       const sourceText = await this.getBodyText(sourcePage);
       if (JOB_UNAVAILABLE_TEXT_MARKERS.some(marker => sourceText.includes(marker))) {
@@ -283,7 +412,7 @@ export class Platform104 extends JobPlatform {
         await sourcePage.waitForTimeout(2500);
       }
 
-      await this.assertPageAccessible(targetPage, true);
+      await this.assertPageAccessible(targetPage, 'application', true);
       const targetText = await this.getBodyText(targetPage);
       if (JOB_UNAVAILABLE_TEXT_MARKERS.some(marker => targetText.includes(marker))) {
         throw new ApplicationFormError('JOB_UNAVAILABLE', '104 顯示職缺已關閉。');
@@ -313,12 +442,16 @@ export class Platform104 extends JobPlatform {
       }
     }
     
+    const navigationStartedAt = Date.now();
     const response = await page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
-    this.assertNavigationResponse(response?.status(), 'search');
+    this.assertNavigationResponse(response?.status(), 'search', page, navigationStartedAt);
     
     // Robust 8-second wait to ensure background thread resources finish rendering Vue Virtual Scroller
     await page.waitForTimeout(8000); 
-    await this.assertPageAccessible(page, false);
+    // The public search page intentionally shows a "登入/註冊" header. It
+    // must not be treated as an expired Session because this is a public
+    // context by design.
+    await this.assertPageAccessible(page, 'search', false);
 
     const title = await page.title();
     console.log(`[Debug Search] Page Title: "${title}"`);
@@ -405,10 +538,10 @@ export class Platform104 extends JobPlatform {
 
   public async getJobDescription(page: Page, jobUrl: string): Promise<{ jdText: string, location: string }> {
     console.log(`Navigating to job details: ${jobUrl}...`);
+    const navigationStartedAt = Date.now();
     const response = await page.goto(jobUrl, { waitUntil: 'domcontentloaded' });
-    this.assertNavigationResponse(response?.status(), 'job');
+    this.assertNavigationResponse(response?.status(), 'job', page, navigationStartedAt);
     await page.waitForTimeout(2000);
-    await this.assertPageAccessible(page, false);
 
     const pageText = await this.getBodyText(page);
     if (JOB_UNAVAILABLE_TEXT_MARKERS.some(marker => pageText.includes(marker))) {
@@ -429,9 +562,9 @@ export class Platform104 extends JobPlatform {
       }
     }
 
-    if (!jdText) {
-      jdText = await page.locator('body').innerText();
-    }
+    // Do not send an unknown error page to the LLM. A normal job page must
+    // expose one of the expected JD containers.
+    await this.assertPageAccessible(page, 'job', false, jdText.trim().length > 0);
 
     let location = '未知';
     const locSpan = page.locator('.job-address span').first();
@@ -466,10 +599,11 @@ export class Platform104 extends JobPlatform {
     let page: Page | null = null;
     try {
       page = await this.getApplyPage();
+      const navigationStartedAt = Date.now();
       const response = await page.goto('https://pda.104.com.tw/my104/index', { waitUntil: 'domcontentloaded' });
-      this.assertNavigationResponse(response?.status(), 'application');
+      this.assertNavigationResponse(response?.status(), 'login', page, navigationStartedAt);
       await page.waitForTimeout(3000);
-      const issue = await this.getAccessIssue(page, true);
+      const issue = await this.getAccessIssue(page, 'login', true);
       return issue === null;
     } catch (err) {
       console.error('驗證 104 登入 Session 時發生例外:', err);

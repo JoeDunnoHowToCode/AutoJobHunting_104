@@ -62,7 +62,6 @@ NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
   "aiModel": "gemini-flash-lite-latest", // 單一通用模型名稱 (例: gemini-flash-lite-latest, gpt-4o-mini, anthropic/claude-3.5-sonnet, 可以到API介面查看模型名稱)
   "scoreThreshold": 65,            // 契合度大於等於此分數才會自動投遞
   "applyLimitPerRun": 30,          // 單次腳本執行的最大投遞數量上限
-  "headless": true,                // true=背景隱藏執行, false=會跳出瀏覽器畫面
   "blacklistKeywords": ["保險", "博弈"],  // 遇到這些關鍵字直接略過不看
   
   // 地點篩選 (可複選)，若不限制請填 []
@@ -108,8 +107,8 @@ NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
    ```
    系統會測試當前 `settings.json` 指定的 AI Provider／模型之連線、契合度評估與自薦信生成。此為線上測試，會將履歷摘要傳送給該 LLM 服務，請只在您同意該資料處理時執行。
 
-2. **首次執行建議啟用有頭模式 (`headless: false`)**：
-   第一次執行 `npm start` 時，建議在 `settings.json` 中設定 `"headless": false`。您可以直觀看到瀏覽器自動搜尋、捲動頁面、評估與填寫自薦信的全過程，確認一切無誤後再改回 `true` 進行背景隱藏執行。
+2. **104 一律使用可見的正式 Chrome**：
+   104 的 JD 在背景模式會回傳 HTTP 403，因此搜尋、JD 與應徵流程會固定啟動本機已安裝的 Google Chrome 並保持可見。這是平台相容性限制，不使用 stealth、假 User-Agent 或規避機制；請勿將它改回背景模式。
 
 3. **登入憑證有效性**：
    手動登入 (`npm run login`) 生成的 `auth_state.json` 憑證通常可維持數週。若系統日誌提示 `Session 已過期`，只需重新執行一次 `npm run login` 即可快速完成更新。
@@ -133,14 +132,25 @@ npm start
 npm run dry-run
 ```
 
-這個模式會使用既有的 104 Session 跑完整的「搜尋 → JD → AI 評估 → 自薦信生成 → 開啟應徵表單」流程，但最多只處理一個非黑名單候選職缺，並在最終送出前停止。它具有以下硬性限制：
+這個模式會使用既有的 104 Session 跑完整的「搜尋 → JD → AI 評估 → 自薦信生成 → 開啟應徵表單」流程，但最多只處理一個非黑名單候選職缺，並在最終送出前停止。104 流程固定以可見 Chrome 執行，並具有以下硬性限制：
 
 * dry-run 呼叫的是獨立的 `preflightApplication(...)`，不會呼叫正式的 `applyToJob(...)`。
 * 不填入自薦信、不勾選同意／偏好選項、不點擊最終送出按鈕。
 * 不寫入 `applyRecord.json`、Notion 或 Telegram；資料庫以唯讀方式開啟，程式層也拒絕任何寫入。
-* 遇到登入失效、驗證頁、429／403 或其他平台限制時立即停止，不嘗試規避或重試。
+* 搜尋或應徵頁遇到登入失效、驗證頁、429／403 或其他平台限制時立即停止，不嘗試規避或重試。
+* JD、搜尋或應徵頁遇到 HTTP 403 時都會在第一筆停止；不會把限制頁當 JD 傳給 LLM，也不會繼續掃描其他職缺。
 
-若要讓人工直接看見測試瀏覽器，可執行 `npm run dry-run:headed`。這只會暫時覆寫本次執行為可見模式，不會改動 `settings.json`；它不是規避平台限制的機制。若要在表單開啟且檢查完成後停住，執行 `npm run dry-run:review`，然後只按 Enter 關閉表單；此模式同樣不會填寫、勾選或送出。
+`npm run dry-run:headed` 保留為相容別名；104 本來就會開啟可見 Chrome。若要在表單開啟且檢查完成後停住，執行 `npm run dry-run:review`，然後只按 Enter 關閉表單；此模式同樣不會填寫、勾選或送出。
+
+### 104 連線診斷（唯讀）
+
+```bash
+npm run diagnose-104:headed
+# 對已知職缺做最小 JD 對照（不搜尋、不開表單）
+npm run diagnose-104:job -- 8x8yl
+```
+
+診斷只驗證登入、公開搜尋與 JD，輸出會去除 query、Cookie、履歷與自薦信內容。專案預設使用本機正式 Google Chrome；若未安裝，請先安裝 Chrome，勿以 stealth 或假瀏覽器資訊取代。
 
 > 注意：開啟「我要應徵」表單本身仍是對 104 的真實互動，平台可能記錄該頁面瀏覽或表單開啟事件；dry-run 只能保證本程式不會傳送履歷內容或完成投遞，不能保證平台端完全沒有觀測紀錄。
 

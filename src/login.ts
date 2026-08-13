@@ -1,6 +1,6 @@
-import { chromium } from 'playwright';
 import * as readline from 'readline';
 import { config } from './config';
+import { launchConfiguredBrowser } from './browser';
 
 function askQuestion(query: string): Promise<string> {
   const rl = readline.createInterface({
@@ -23,7 +23,7 @@ async function run() {
   console.log('請在瀏覽器中手動完成登入（包含填寫帳密、處理驗證碼等）。');
   console.log('==================================================\n');
 
-  const browser = await chromium.launch({ headless: false });
+  const browser = await launchConfiguredBrowser({ headless: false });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     locale: 'zh-TW',

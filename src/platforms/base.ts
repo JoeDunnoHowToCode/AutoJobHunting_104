@@ -1,6 +1,7 @@
-import { chromium, BrowserContext, Page } from 'playwright';
+import { BrowserContext, Page } from 'playwright';
 import * as fs from 'fs';
 import { config } from '../config';
+import { launchConfiguredBrowser } from '../browser';
 
 export interface ScrapedJob {
   jobId: string;
@@ -46,35 +47,73 @@ export interface ApplicationPreflightOptions {
 }
 
 export abstract class JobPlatform {
-  protected searchContext: BrowserContext | null = null;
-  protected applyContext: BrowserContext | null = null;
+  /**
+   * 104 serves public job discovery and authenticated application pages through
+   * different flows. Keep the contexts explicit: public search/JD requests must
+   * not accidentally inherit account cookies, while all authenticated pages
+   * share one cookie jar for login verification and application handling.
+   */
+  protected publicContext: BrowserContext | null = null;
+  protected authenticatedContext: BrowserContext | null = null;
 
   public abstract readonly platformName: string;
 
-  public async getSearchPage(): Promise<Page> {
-    if (this.searchContext) {
+  private async launch104Browser() {
+    // 104 returns HTTP 403 for a JD that is readable in the same browser when
+    // it runs headful. This is a verified platform compatibility requirement,
+    // not fingerprint manipulation: the 104 workflow always remains visible.
+    return launchConfiguredBrowser({ headless: false });
+  }
+
+  private async getPublicPage(): Promise<Page> {
+    if (this.publicContext) {
       try {
-        // Reuse existing context, just return a new page
-        return await this.searchContext.newPage();
+        return await this.publicContext.newPage();
       } catch (e) {
-        // Context is dead, recreate
-        this.searchContext = null;
+        this.publicContext = null;
       }
     }
 
-    const browser = await chromium.launch({ headless: config.headless });
-
-    this.searchContext = await browser.newContext({
+    const browser = await this.launch104Browser();
+    this.publicContext = await browser.newContext({
       viewport: { width: 1280, height: 800 },
       locale: 'zh-TW',
-      timezoneId: 'Asia/Taipei'
+      timezoneId: 'Asia/Taipei',
     });
+    console.log('Using isolated public 104 browser context for search and JD requests.');
+    return await this.publicContext.newPage();
+  }
 
-    return await this.searchContext.newPage();
+  private async getAuthenticatedPage(): Promise<Page> {
+    if (this.authenticatedContext) {
+      try {
+        return await this.authenticatedContext.newPage();
+      } catch (e) {
+        this.authenticatedContext = null;
+      }
+    }
+
+    if (!fs.existsSync(config.authStatePath)) {
+      throw new Error(`找不到登入 Session 檔案: ${config.authStatePath}；請先執行 npm run login。`);
+    }
+
+    const browser = await this.launch104Browser();
+    this.authenticatedContext = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      locale: 'zh-TW',
+      timezoneId: 'Asia/Taipei',
+      storageState: config.authStatePath,
+    });
+    console.log(`Loading session from ${config.authStatePath} for authenticated 104 pages...`);
+    return await this.authenticatedContext.newPage();
+  }
+
+  public async getSearchPage(): Promise<Page> {
+    return this.getPublicPage();
   }
 
   public async getDetailPage(): Promise<Page> {
-    return await this.getSearchPage();
+    return this.getPublicPage();
   }
 
   public async closePage(page: Page): Promise<void> {
@@ -86,43 +125,17 @@ export abstract class JobPlatform {
   }
 
   public async getApplyPage(): Promise<Page> {
-    if (this.applyContext) {
-      try {
-        // Reuse existing context, just return a new page
-        return await this.applyContext.newPage();
-      } catch (e) {
-        // Context is dead, recreate
-        this.applyContext = null;
-      }
-    }
-
-    const browser = await chromium.launch({ headless: config.headless });
-    
-    const contextOptions: any = {
-      viewport: { width: 1280, height: 800 },
-      locale: 'zh-TW',
-      timezoneId: 'Asia/Taipei'
-    };
-
-    if (fs.existsSync(config.authStatePath)) {
-      console.log(`Loading session from ${config.authStatePath} for application context...`);
-      contextOptions.storageState = config.authStatePath;
-    } else {
-      console.warn(`Warning: ${config.authStatePath} not found for application context.`);
-    }
-
-    this.applyContext = await browser.newContext(contextOptions);
-    return await this.applyContext.newPage();
+    return this.getAuthenticatedPage();
   }
 
   public async closeBrowsers(): Promise<void> {
-    if (this.searchContext) {
-      await this.searchContext.browser()?.close();
-      this.searchContext = null;
+    if (this.publicContext) {
+      await this.publicContext.browser()?.close();
+      this.publicContext = null;
     }
-    if (this.applyContext) {
-      await this.applyContext.browser()?.close();
-      this.applyContext = null;
+    if (this.authenticatedContext) {
+      await this.authenticatedContext.browser()?.close();
+      this.authenticatedContext = null;
     }
   }
 

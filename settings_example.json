@@ -3,7 +3,6 @@
   "aiModel": "gemini-flash-lite-latest", // 單一通用模型名稱 (如 gemini-2.5-flash, gpt-4o-mini, anthropic/claude-3.5-sonnet)
   "scoreThreshold": 65,            // 契合度大於等於此分數才會自動投遞
   "applyLimitPerRun": 30,          // 單次腳本執行的最大投遞數量上限
-  "headless": true,                // true=背景隱藏執行, false=會跳出瀏覽器畫面
   "blacklistKeywords": ["保險"],   // 遇到這些關鍵字直接略過不看
   
   // 地點篩選 (可複選)，若不限制請填 []

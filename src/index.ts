@@ -1,7 +1,7 @@
 import PQueue from 'p-queue';
 import { Page } from 'playwright';
 import { JobPlatform, ScrapedJob } from './platforms/base';
-import { Platform104, PlatformAccessError } from './platforms/platform104';
+import { ApplicationFormError, Platform104, PlatformAccessError } from './platforms/platform104';
 import { LLMFactory } from './ai/factory';
 import { JobDatabase, JobRecord } from './db';
 import { config, pipelineConfig } from './config';
@@ -302,7 +302,11 @@ export async function main(runMode: RunMode = resolveRunMode()) {
         handedToLlm = true;
       } catch (error) {
         console.error(`擷取 JD 失敗 (${job.jobId}):`, error);
-        record(job, 'failed', `JD 擷取失敗: ${error instanceof Error ? error.message : String(error)}`);
+        if (error instanceof ApplicationFormError && error.code === 'JOB_UNAVAILABLE') {
+          record(job, 'skipped', error.message);
+        } else {
+          record(job, 'failed', `JD 擷取失敗: ${error instanceof Error ? error.message : String(error)}`);
+        }
         if (error instanceof PlatformAccessError) {
           await stopForPlatformAccess(platform, job, error.message);
         }
@@ -316,7 +320,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
   try {
     for (const platform of platforms) {
       if (!await platform.verifyLogin()) {
-        throw new Error(`${platform.platformName} 登入 Session 已過期或無效；請執行 npm run login。`);
+        throw new Error(`${platform.platformName} 無法驗證登入或平台存取狀態；請查看上方 [104 diagnostic] 後再決定是否執行 npm run login。`);
       }
       console.log(`[驗證成功] ${platform.platformName} 登入 Session 有效。`);
 
