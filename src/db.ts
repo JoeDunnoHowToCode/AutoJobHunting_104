@@ -28,9 +28,21 @@ interface ApplyRecordData {
 export class JobDatabase {
   private data: ApplyRecordData = {};
   private currentApplyId: number = 0;
+  private processedMap: Map<string, { status: 'applied' | 'skipped' | 'failed'; dateStr: string }> = new Map();
 
   constructor() {
     this.load();
+  }
+
+  private rebuildIndex(): void {
+    this.processedMap.clear();
+    for (const date in this.data) {
+      for (const status of ['applied', 'skipped', 'failed'] as const) {
+        for (const record of this.data[date][status]) {
+          this.processedMap.set(record.jobId, { status: record.status, dateStr: date });
+        }
+      }
+    }
   }
 
   private getTodayDateString(): string {
@@ -82,6 +94,7 @@ export class JobDatabase {
         this.data = {};
         this.save();
       }
+      this.rebuildIndex();
     } catch (error) {
       console.error('Failed to load database. Halting to prevent data loss or silent error:', error);
       throw error;
@@ -105,25 +118,16 @@ export class JobDatabase {
   }
 
   public hasBeenProcessed(jobId: string): boolean {
-    // Check across all dates
-    for (const date in this.data) {
-      for (const status of ['applied', 'skipped', 'failed'] as const) {
-        const record = this.data[date][status].find(r => r.jobId === jobId);
-        if (record) {
-          // Allow retry if it failed previously
-          if (record.status === 'failed') return false;
-          // Allow re-evaluation of skipped jobs after 14 days
-          if (record.status === 'skipped') {
-            const recordDate = new Date(date);
-            const now = new Date();
-            const daysSince = Math.floor((now.getTime() - recordDate.getTime()) / (1000 * 60 * 60 * 24));
-            if (daysSince >= 14) return false;
-          }
-          return true;
-        }
-      }
+    const entry = this.processedMap.get(jobId);
+    if (!entry) return false;
+    if (entry.status === 'failed') return false;
+    if (entry.status === 'skipped') {
+      const recordDate = new Date(entry.dateStr);
+      const now = new Date();
+      const daysSince = Math.floor((now.getTime() - recordDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (daysSince >= 14) return false;
     }
-    return false;
+    return true;
   }
 
   public addRecord(record: JobRecord): void {
@@ -136,6 +140,7 @@ export class JobDatabase {
     this.data[today].failed = this.data[today].failed.filter(r => r.jobId !== record.jobId);
     
     this.data[today][record.status].push(record);
+    this.processedMap.set(record.jobId, { status: record.status, dateStr: today });
     this.save();
   }
 

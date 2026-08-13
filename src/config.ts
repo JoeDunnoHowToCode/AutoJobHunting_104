@@ -23,6 +23,10 @@ export interface Config {
   notionApiToken: string;
   notionDatabaseId: string;
   areas: string[];
+  jdConcurrency: number;
+  aiConcurrency: number;
+  maxApplyQueueSize: number;
+  resumeApplyQueueSize: number;
 }
 
 const rootDir = path.resolve(__dirname, '..');
@@ -57,5 +61,9 @@ export const config: Config = {
   telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
   notionApiToken: process.env.NOTION_API_TOKEN || '',
   notionDatabaseId: process.env.NOTION_DATABASE_ID || '',
-  areas: settings.areas || []
+  areas: settings.areas || [],
+  jdConcurrency: settings.jdConcurrency ?? 1,
+  aiConcurrency: settings.aiConcurrency ?? 2,
+  maxApplyQueueSize: settings.maxApplyQueueSize ?? 5,
+  resumeApplyQueueSize: settings.resumeApplyQueueSize ?? 2
 };

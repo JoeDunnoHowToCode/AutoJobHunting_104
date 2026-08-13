@@ -7,13 +7,16 @@
     "build": "tsc",
     "start": "ts-node src/index.ts",
     "login": "ts-node src/login.ts",
-    "test-ai": "ts-node src/test-multi-llm.ts"
+    "test-ai": "ts-node src/test-multi-llm.ts",
+    "test-pipeline": "ts-node src/test-pipeline.ts"
   },
   "dependencies": {
     "@google/genai": "latest",
     "@notionhq/client": "^5.22.0",
     "dotenv": "^16.4.5",
     "openai": "^7.4.0",
+    "p-limit": "^3.1.0",
+    "p-queue": "^6.6.2",
     "playwright": "^1.44.0",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",

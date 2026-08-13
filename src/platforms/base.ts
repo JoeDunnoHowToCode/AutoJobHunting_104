@@ -46,6 +46,18 @@ export abstract class JobPlatform {
     return await this.searchContext.newPage();
   }
 
+  public async getDetailPage(): Promise<Page> {
+    return await this.getSearchPage();
+  }
+
+  public async closePage(page: Page): Promise<void> {
+    try {
+      if (page && !page.isClosed()) {
+        await page.close();
+      }
+    } catch (e) {}
+  }
+
   public async getApplyPage(): Promise<Page> {
     if (this.applyContext) {
       try {
