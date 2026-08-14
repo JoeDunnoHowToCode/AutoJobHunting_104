@@ -11,6 +11,7 @@ import {
 } from '../../types';
 import { LLMProvider } from '../types';
 import { retryTransient } from '../retry';
+import { EVALUATION_JSON_SCHEMA, CUSTOMIZATION_JSON_SCHEMA } from '../schemas';
 
 function sanitizeJdContent(jd: string): string {
   return jd
@@ -161,6 +162,10 @@ ${sanitizedJd}
       const response = await this.ai!.models.generateContent({
         model: config.aiModel,
         contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: EVALUATION_JSON_SCHEMA,
+        },
       });
 
       const text = response.text?.trim() || '';
@@ -257,6 +262,10 @@ ${sanitizedJd}
       const response = await this.ai!.models.generateContent({
         model: config.aiModel,
         contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: CUSTOMIZATION_JSON_SCHEMA,
+        },
       });
 
       const text = response.text?.trim() || '';

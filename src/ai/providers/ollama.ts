@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { LLMProvider } from '../types';
 import { config } from '../../config';
 import { retryTransient } from '../retry';
+import { EVALUATION_JSON_SCHEMA, CUSTOMIZATION_JSON_SCHEMA } from '../schemas';
 import {
   EvaluationResult,
   CustomizationResult,
@@ -122,7 +123,14 @@ export class OllamaProvider implements LLMProvider {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      response_format: { type: 'json_object' },
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'evaluation_output',
+          strict: true,
+          schema: EVALUATION_JSON_SCHEMA,
+        },
+      },
     });
 
     const content = completion.choices[0]?.message?.content || '{}';
@@ -199,7 +207,14 @@ ${evalSection}
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      response_format: { type: 'json_object' },
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'customization_output',
+          strict: true,
+          schema: CUSTOMIZATION_JSON_SCHEMA,
+        },
+      },
     });
 
     const content = completion.choices[0]?.message?.content || '{}';
