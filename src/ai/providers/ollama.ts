@@ -4,6 +4,7 @@ import { LLMProvider } from '../types';
 import { config } from '../../config';
 import { retryTransient } from '../retry';
 import { EVALUATION_JSON_SCHEMA, CUSTOMIZATION_JSON_SCHEMA } from '../schemas';
+import { buildEvaluationPrompt, buildCustomizationPrompt } from '../prompts';
 import {
   EvaluationResult,
   CustomizationResult,
@@ -94,34 +95,13 @@ export class OllamaProvider implements LLMProvider {
 
     const sanitizedJd = sanitizeJdContent(jobDescription);
     const resume = this.buildResumeSummary();
-    const systemPrompt = `你是一位專業的科技業職涯顧問與人資專家。請根據加權評分量表比對求職者與職缺，並【嚴格】輸出標準 JSON 格式。\n\n【求職者履歷摘要】\n${resume}`;
-    const userPrompt = `
-【目標公司】: ${companyName}
-【目標職缺】: ${jobTitle}
-【職缺 JD】: ${sanitizedJd}
-
-請輸出以下 JSON 結構：
-{
-  "breakdown": {
-    "skillMatch": 30,
-    "experienceMatch": 15,
-    "domainMatch": 10,
-    "educationMatch": 3,
-    "bonusMatch": 8
-  },
-  "confidence": 0.8,
-  "strengths": ["優勢1", "優勢2"],
-  "gaps": ["缺口1"],
-  "mustHaveMatches": [{"item": "必備條件1", "status": "matched"}],
-  "reason": "評估理由說明。"
-}`;
+    const prompt = buildEvaluationPrompt({ resume, companyName, jobTitle, sanitizedJd });
 
     return retryTransient(async () => {
     const completion = await this.client!.chat.completions.create({
       model: this.model,
       messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
+        { role: 'user', content: prompt },
       ],
       response_format: {
         type: 'json_schema',
@@ -182,30 +162,19 @@ export class OllamaProvider implements LLMProvider {
 
     const sanitizedJd = sanitizeJdContent(jobDescription);
     const resume = this.buildResumeSummary();
-    let evalSection = '';
-    if (evaluationContext) {
-      evalSection = `AI 評估結果：優勢【${evaluationContext.strengths?.join(', ')}】，缺口【${evaluationContext.gaps?.join(', ')}】`;
-    }
-
-    const systemPrompt = `你是一位求職專家。請根據求職者優勢與 JD 生成客製化自薦信與自我介紹，並【嚴格】輸出 JSON 格式。\n\n【求職者履歷摘要】\n${resume}`;
-    const userPrompt = `
-【公司】: ${companyName}
-【職缺】: ${jobTitle}
-【JD】: ${sanitizedJd}
-${evalSection}
-
-請輸出以下 JSON 結構：
-{
-  "coverLetter": "條列式客製化自我推薦信 (約 150-250 字，台灣繁體中文)",
-  "optimizedSelfIntro": "精簡自我介紹 (約 100-200 字，台灣繁體中文)"
-}`;
+    const prompt = buildCustomizationPrompt({
+      resume,
+      companyName,
+      jobTitle,
+      sanitizedJd,
+      evaluationContext,
+    });
 
     return retryTransient(async () => {
     const completion = await this.client!.chat.completions.create({
       model: this.model,
       messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
+        { role: 'user', content: prompt },
       ],
       response_format: {
         type: 'json_schema',

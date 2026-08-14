@@ -95,11 +95,16 @@ export abstract class JobPlatform {
     return this.persistentContext;
   }
 
+  private initialPageClaimed = false;
+
   private async getAvailablePage(): Promise<Page> {
     const context = await this.getPersistentContext();
-    const blankPage = context.pages().find(p => p.url() === 'about:blank' && !p.isClosed());
-    if (blankPage) {
-      return blankPage;
+    if (!this.initialPageClaimed) {
+      this.initialPageClaimed = true;
+      const initialPage = context.pages().find(p => !p.isClosed());
+      if (initialPage) {
+        return initialPage;
+      }
     }
     return context.newPage();
   }
@@ -125,6 +130,7 @@ export abstract class JobPlatform {
   }
 
   public async closeBrowsers(): Promise<void> {
+    this.initialPageClaimed = false;
     if (this.persistentContext) {
       try {
         await this.persistentContext.close();

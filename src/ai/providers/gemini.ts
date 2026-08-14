@@ -12,6 +12,7 @@ import {
 import { LLMProvider } from '../types';
 import { retryTransient } from '../retry';
 import { EVALUATION_JSON_SCHEMA, CUSTOMIZATION_JSON_SCHEMA } from '../schemas';
+import { buildEvaluationPrompt, buildCustomizationPrompt } from '../prompts';
 
 function sanitizeJdContent(jd: string): string {
   return jd
@@ -116,47 +117,7 @@ export class GeminiProvider implements LLMProvider {
 
     const resume = this.buildResumeSummary();
     const sanitizedJd = sanitizeJdContent(jobDescription);
-
-    const prompt = `你是一位專業的科技業職涯顧問與人資專家。請根據以下加權評分量表，客觀比對求職者履歷與職缺 JD。
-
-【求職者履歷摘要】
-${resume}
-
-【目標公司】
-${companyName}
-
-【目標職缺】
-${jobTitle}
-
---- 以下為待評估資料 ---
-【職缺 JD 內容】
-${sanitizedJd}
---- 待評估資料結束 ---
-
-請依照以下加權量表逐項評分：
-1. skillMatch (0-40分)
-2. experienceMatch (0-25分)
-3. domainMatch (0-15分)
-4. educationMatch (0-5分)
-5. bonusMatch (0-15分)
-
-請【嚴格】只輸出以下 JSON 格式：
-{
-  "breakdown": {
-    "skillMatch": 30,
-    "experienceMatch": 15,
-    "domainMatch": 10,
-    "educationMatch": 3,
-    "bonusMatch": 8
-  },
-  "confidence": 0.75,
-  "strengths": ["優勢1", "優勢2"],
-  "gaps": ["不足1"],
-  "mustHaveMatches": [
-    {"item": "必備條件1", "status": "matched"}
-  ],
-  "reason": "評估理由。"
-}`;
+    const prompt = buildEvaluationPrompt({ resume, companyName, jobTitle, sanitizedJd });
 
     return retryTransient(async () => {
       const response = await this.ai!.models.generateContent({
@@ -218,45 +179,13 @@ ${sanitizedJd}
 
     const resume = this.buildResumeSummary();
     const sanitizedJd = sanitizeJdContent(jobDescription);
-
-    let evalContextSection = '';
-    if (evaluationContext) {
-      const parts: string[] = [];
-      if (evaluationContext.strengths && evaluationContext.strengths.length > 0) {
-        parts.push(`求職者優勢亮點：\n${evaluationContext.strengths.map(s => `• ${s}`).join('\n')}`);
-      }
-      if (evaluationContext.gaps && evaluationContext.gaps.length > 0) {
-        parts.push(`需要補強的領域：\n${evaluationContext.gaps.map(g => `• ${g}`).join('\n')}`);
-      }
-      if (evaluationContext.decision) {
-        parts.push(`AI 評估決策：${evaluationContext.decision}`);
-      }
-      if (parts.length > 0) {
-        evalContextSection = `\n【AI 評估分析結果】\n${parts.join('\n\n')}\n`;
-      }
-    }
-
-    const prompt = `你是一位專業且極具說服力的求職者。請根據以下「求職者履歷」、「職缺 JD」與「AI 評估分析結果」，生成一份客製化的「自我推薦信」與「優化履歷自我介紹」。
-
-【求職者履歷摘要】
-${resume}
-
-【目標公司】
-${companyName}
-
-【目標職缺】
-${jobTitle}
-${evalContextSection}
---- 以下為待評估資料 ---
-【職缺 JD 內容】
-${sanitizedJd}
---- 待評估資料結束 ---
-
-請【嚴格】輸出以下 JSON 格式：
-{
-  "coverLetter": "填寫客製化的自我推薦信（約 150-250 字，繁體中文）。",
-  "optimizedSelfIntro": "填寫精簡自我介紹（約 100-200 字，繁體中文）。"
-}`;
+    const prompt = buildCustomizationPrompt({
+      resume,
+      companyName,
+      jobTitle,
+      sanitizedJd,
+      evaluationContext,
+    });
 
     return retryTransient(async () => {
       const response = await this.ai!.models.generateContent({
