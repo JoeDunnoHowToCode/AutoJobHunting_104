@@ -14,6 +14,7 @@ export interface Config {
   scoreThreshold: number;
   resumePath: string;
   authStatePath: string;
+  userDataDir: string;
   dbPath: string;
   applyLimitPerRun: number;
   /** Used only by non-104 auxiliary tools; 104 browser workflows are always visible. */
@@ -81,6 +82,7 @@ export const config: Config = {
   scoreThreshold: settings.scoreThreshold ?? 65,
   resumePath: path.resolve(rootDir, 'resume.json'),
   authStatePath: path.resolve(rootDir, 'auth_state.json'),
+  userDataDir: path.resolve(rootDir, '.chrome-profile'),
   dbPath: path.resolve(rootDir, 'applyRecord.json'),
   applyLimitPerRun: settings.applyLimitPerRun ?? 10,
   // Intended for one-off, visible manual validation without modifying a

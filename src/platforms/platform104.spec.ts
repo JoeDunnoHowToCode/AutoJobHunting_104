@@ -58,31 +58,21 @@ function run(): void {
     'JD 403 不得被降級為可略過職缺',
   );
 
-  console.log('[9/11] 104 必須一律使用可見瀏覽器，避免已驗證的背景模式 403');
+  console.log('[9/11] 104 必須採用防偵測 Persistent Context');
   assert(
-    baseSource.includes('launchConfiguredBrowser({ headless: false })'),
-    '104 平台必須強制採用可見瀏覽器模式',
+    baseSource.includes('launchStealthPersistentContext'),
+    '104 平台必須採用防偵測 Persistent Context 啟動機制',
   );
 
-  console.log('[10/11] 公開搜尋、JD 與已登入頁面必須使用明確且正確的 Context');
-  assert(baseSource.includes('protected publicContext'), '應維護公開搜尋 Context');
-  assert(baseSource.includes('protected authenticatedContext'), '應維護已登入 Context');
-  assert(baseSource.includes('storageState: config.authStatePath'), '已登入 Context 必須載入保存的 Session');
-  const searchStart = baseSource.indexOf('public async getSearchPage');
-  const searchEnd = baseSource.indexOf('\n  }', searchStart);
-  assert(baseSource.slice(searchStart, searchEnd).includes('return this.getPublicPage()'), '搜尋必須使用共享公開 Context');
-  const detailStart = baseSource.indexOf('public async getDetailPage');
-  const detailEnd = baseSource.indexOf('\n  }', detailStart);
-  assert(baseSource.slice(detailStart, detailEnd).includes('return this.getIsolatedDetailPage()'), 'JD 必須使用全新公開 Context');
-  const applyStart = baseSource.indexOf('public async getApplyPage');
-  const applyEnd = baseSource.indexOf('\n  }', applyStart);
-  assert(baseSource.slice(applyStart, applyEnd).includes('return this.getAuthenticatedPage()'), '應徵頁必須使用已登入 Context');
+  console.log('[10/11] 平台必須具備 Persistent Context 管理與人手擬真輸入');
+  assert(baseSource.includes('protected persistentContext'), '應維護 persistentContext');
+  assert(baseSource.includes('getPersistentContext()'), '應提供 getPersistentContext 方法');
+  assert(platformSource.includes('humanType'), '應徵流程必須使用 humanType 進行擬真人手輸入');
 
-  console.log('[11/11] 獨立 JD Context 關閉時必須連同瀏覽器釋放');
+  console.log('[11/11] 應徵與搜尋分頁皆由 Persistent Context 產出');
   assert(
-    baseSource.includes('const isSharedContext = context === this.publicContext || context === this.authenticatedContext') &&
-      baseSource.includes('await context.browser()?.close()'),
-    'JD 使用的一次性 Context 必須在 closePage 時關閉其瀏覽器',
+    baseSource.includes('await this.getPersistentContext()'),
+    '頁面必須由統一的 Persistent Context 產出',
   );
 }
 

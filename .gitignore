@@ -7,6 +7,7 @@ dist/
 # Environment variables & Secrets (CRITICAL)
 .env
 auth_state.json
+.chrome-profile/
 settings.json
 
 # Personal data

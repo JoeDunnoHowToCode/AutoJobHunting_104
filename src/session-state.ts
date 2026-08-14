@@ -18,14 +18,20 @@ function originBelongsTo104(origin: string): boolean {
   }
 }
 
+/** Cloudflare cookies are ephemeral and tied to TLS sessions; importing stale ones causes immediate 403 blocks. */
+function isCloudflareEphemeralCookie(name: string): boolean {
+  return name.startsWith('__cf') || name.startsWith('cf_') || name === '_cfuvid';
+}
+
 /**
- * A login snapshot needs 104 state only. Keeping unrelated third-party
- * cookies or local storage in auth_state.json has no role in 104 login and
- * unnecessarily broadens the sensitivity of the local session file.
+ * A login snapshot needs 104 authentication state only.
+ * Ephemeral WAF cookies (like Cloudflare tokens) and unrelated third-party cookies are stripped.
  */
 export function filter104StorageState(state: SavedStorageState): SavedStorageState {
   return {
-    cookies: state.cookies.filter(cookie => cookieBelongsTo104(cookie.domain)),
+    cookies: state.cookies.filter(
+      cookie => cookieBelongsTo104(cookie.domain) && !isCloudflareEphemeralCookie(cookie.name)
+    ),
     origins: state.origins.filter(origin => originBelongsTo104(origin.origin)),
   };
 }

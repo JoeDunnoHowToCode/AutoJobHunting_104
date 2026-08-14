@@ -701,8 +701,8 @@ export class Platform104 extends JobPlatform {
         return false;
       }
 
-      console.log('Writing cover letter...');
-      await inspection.textarea.fill(coverLetter);
+      console.log('Writing cover letter with human typing simulation...');
+      await humanType(inspection.textarea, coverLetter);
       await session.targetPage.waitForTimeout(1000);
 
       console.log('Submitting application...');
@@ -720,4 +720,15 @@ export class Platform104 extends JobPlatform {
       await this.closeApplicationForm(session);
     }
   }
+}
+
+/**
+ * Simulates human typing with natural character delays.
+ */
+export async function humanType(locator: Locator, text: string): Promise<void> {
+  await locator.focus();
+  await locator.fill('');
+  await locator.pressSequentially(text, {
+    delay: Math.floor(Math.random() * 25) + 20,
+  });
 }

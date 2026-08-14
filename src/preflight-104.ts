@@ -18,8 +18,8 @@ function requestedJobId(): string {
  * interaction, so callers must use it sparingly and only for manual review.
  */
 async function run(): Promise<void> {
-  if (!fs.existsSync(config.authStatePath)) {
-    throw new Error(`找不到登入 Session 檔案: ${config.authStatePath}；請先執行 npm run login。`);
+  if (!fs.existsSync(config.userDataDir) && !fs.existsSync(config.authStatePath)) {
+    throw new Error(`找不到登入狀態或 Profile 目錄；請先執行 npm run login。`);
   }
 
   const jobId = requestedJobId();
