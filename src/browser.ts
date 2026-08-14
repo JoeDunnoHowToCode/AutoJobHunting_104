@@ -42,7 +42,6 @@ export async function launchStealthPersistentContext(
   const baseArgs = [
     '--disable-blink-features=AutomationControlled',
     '--disable-infobars',
-    '--no-sandbox',
     '--disable-dev-shm-usage',
     '--disk-cache-size=104857600', // 100MB cache limit
     '--media-cache-size=52428800', // 50MB media cache limit

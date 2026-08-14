@@ -12,6 +12,7 @@
     "diagnose-104:headed": "AUTOJOB_HEADLESS=false ts-node src/diagnose-104.ts",
     "diagnose-104:job": "AUTOJOB_HEADLESS=false ts-node src/diagnose-104.ts --job-id",
     "preflight-104:review": "AUTOJOB_HEADLESS=false ts-node src/preflight-104.ts --job-id",
+    "inspect-apply": "AUTOJOB_HEADLESS=false ts-node src/inspect-application.ts",
     "login": "ts-node src/login.ts",
     "test-ai": "ts-node src/ai-smoke.ts",
     "test-pipeline": "ts-node src/pipeline.spec.ts",

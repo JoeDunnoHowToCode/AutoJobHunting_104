@@ -95,19 +95,25 @@ export abstract class JobPlatform {
     return this.persistentContext;
   }
 
-  public async getSearchPage(): Promise<Page> {
+  private async getAvailablePage(): Promise<Page> {
     const context = await this.getPersistentContext();
+    const blankPage = context.pages().find(p => p.url() === 'about:blank' && !p.isClosed());
+    if (blankPage) {
+      return blankPage;
+    }
     return context.newPage();
+  }
+
+  public async getSearchPage(): Promise<Page> {
+    return this.getAvailablePage();
   }
 
   public async getDetailPage(): Promise<Page> {
-    const context = await this.getPersistentContext();
-    return context.newPage();
+    return this.getAvailablePage();
   }
 
   public async getApplyPage(): Promise<Page> {
-    const context = await this.getPersistentContext();
-    return context.newPage();
+    return this.getAvailablePage();
   }
 
   public async closePage(page: Page): Promise<void> {
