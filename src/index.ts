@@ -46,7 +46,7 @@ function passesSalaryFilter(jdText: string, expectedSalary: number, acceptNegoti
 export async function main(runMode: RunMode = resolveRunMode()) {
   const isDryRun = runMode === 'dry-run';
   const runLimit = isDryRun ? 1 : config.applyLimitPerRun;
-  const runtimePipelineConfig = getRuntimePipelineLimits(runMode, pipelineConfig);
+  const runtimePipelineConfig = getRuntimePipelineLimits(runMode, pipelineConfig, runLimit);
   const pauseBeforeClose = isDryRun && !config.headless && process.argv.includes('--pause-before-close');
 
   console.log('==================================================');
@@ -171,7 +171,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
       completedActionCount() + pipeline.reservedApplyCount >= runLimit
     )) {
       producerPaused = true;
-      console.log(`[佇列背壓] in-flight=${pipeline.inFlightCount}/${runtimePipelineConfig.maxInFlightJobs}, apply=${applyLoad()}/${runtimePipelineConfig.maxApplyQueueSize}；暫停 Producer。`);
+      console.log(`[佇列背壓調節] 處理中工作: ${pipeline.inFlightCount}/${runtimePipelineConfig.maxInFlightJobs}，應徵緩衝: ${applyLoad()}/${runtimePipelineConfig.maxApplyQueueSize}；暫停搜尋以消化當前任務。`);
     }
 
     while (producerPaused && !pipelineStopped && !reachedRunLimit()) {

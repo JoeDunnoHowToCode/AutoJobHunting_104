@@ -26,8 +26,15 @@ export const DRY_RUN_PIPELINE_LIMITS: Readonly<PipelineLimits> = {
 export function getRuntimePipelineLimits(
   mode: RunMode,
   liveLimits: Readonly<PipelineLimits>,
+  applyLimit: number = 1,
 ): Readonly<PipelineLimits> {
-  return mode === 'dry-run' ? DRY_RUN_PIPELINE_LIMITS : liveLimits;
+  if (mode === 'dry-run') return DRY_RUN_PIPELINE_LIMITS;
+  return {
+    ...liveLimits,
+    maxApplyQueueSize: Math.min(liveLimits.maxApplyQueueSize, Math.max(1, applyLimit)),
+    resumeApplyQueueSize: Math.min(liveLimits.resumeApplyQueueSize, Math.max(0, applyLimit - 1)),
+    maxInFlightJobs: Math.min(liveLimits.maxInFlightJobs, Math.max(2, applyLimit * 2)),
+  };
 }
 
 export type ApplicationActionResult =
