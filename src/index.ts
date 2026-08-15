@@ -247,7 +247,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
       let handedToApply = false;
       let slotReserved = false;
       try {
-        if (pipelineStopped) return;
+        if (pipelineStopped || reachedRunLimit()) return;
         const aiService = LLMFactory.getProvider();
         const evaluation = await aiService.evaluateJob(job.title, job.company, jdText);
         const formattedReason = evaluation.reason.replace(/(\d+\.\s)/g, '\n$1').trim();
@@ -272,7 +272,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
           gaps: evaluation.gaps,
           decision: evaluation.decision,
         });
-        if (pipelineStopped) return;
+        if (pipelineStopped || reachedRunLimit()) return;
 
         enqueueApply(platform, job, location, evaluation.score, formattedReason, content.coverLetter);
         handedToApply = true;
@@ -291,7 +291,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
       let detailPage: Page | null = null;
       let handedToLlm = false;
       try {
-        if (pipelineStopped) return;
+        if (pipelineStopped || reachedRunLimit()) return;
         detailPage = await platform.getDetailPage();
         const jdData = await platform.getJobDescription(detailPage, job.url);
         if (!passesSalaryFilter(jdData.jdText, expectedSalary, acceptNegotiable)) {
