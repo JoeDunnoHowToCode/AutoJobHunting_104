@@ -20,6 +20,22 @@ export function cleanSingletonLocks(userDataDir: string): void {
         }
       }
     }
+
+    // Reset crash status to prevent "Restore Pages" prompt
+    const checkPrefs = ['Preferences', path.join('Default', 'Preferences')];
+    for (const p of checkPrefs) {
+      const prefsPath = path.join(userDataDir, p);
+      if (fs.existsSync(prefsPath)) {
+        try {
+          const prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
+          if (prefs?.profile && (prefs.profile.exit_type !== 'Normal' || prefs.profile.exited_cleanly !== true)) {
+            prefs.profile.exit_type = 'Normal';
+            prefs.profile.exited_cleanly = true;
+            fs.writeFileSync(prefsPath, JSON.stringify(prefs));
+          }
+        } catch (e) {}
+      }
+    }
   } catch {
     // Ignore cleanup failures
   }
@@ -40,8 +56,8 @@ export async function launchStealthPersistentContext(
   cleanSingletonLocks(userDataDir);
 
   const baseArgs = [
+    '--test-type',
     '--disable-blink-features=AutomationControlled',
-    '--disable-infobars',
     '--disable-dev-shm-usage',
     '--disk-cache-size=104857600', // 100MB cache limit
     '--media-cache-size=52428800', // 50MB media cache limit
@@ -61,7 +77,8 @@ export async function launchStealthPersistentContext(
     locale: 'zh-TW',
     timezoneId: 'Asia/Taipei',
     args: baseArgs,
-    ignoreDefaultArgs: ['--enable-automation'],
+    chromiumSandbox: true,
+    ignoreDefaultArgs: ['--enable-automation', '--no-sandbox'],
   };
 
   let context: BrowserContext;
