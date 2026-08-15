@@ -26,9 +26,10 @@ export const DRY_RUN_PIPELINE_LIMITS: Readonly<PipelineLimits> = {
 export function getRuntimePipelineLimits(
   mode: RunMode,
   liveLimits: Readonly<PipelineLimits>,
-  applyLimit: number = 1,
+  applyLimit?: number,
 ): Readonly<PipelineLimits> {
   if (mode === 'dry-run') return DRY_RUN_PIPELINE_LIMITS;
+  if (applyLimit === undefined) return liveLimits;
   return {
     ...liveLimits,
     maxApplyQueueSize: Math.min(liveLimits.maxApplyQueueSize, Math.max(1, applyLimit)),
