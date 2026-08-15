@@ -109,6 +109,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
   const processedInThisRun: JobRecord[] = [];
   const preflightResults: Array<{ job: ScrapedJob; score: number; result: Awaited<ReturnType<JobPlatform['preflightApplication']>> }> = [];
   let appliedCount = 0;
+  let aiApprovedCount = 0;
   let preflightCount = 0;
   let dryRunCandidateCount = 0;
   let processedCount = 0;
@@ -116,7 +117,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
   let stopNoticeSent = false;
   let producerPaused = false;
 
-  const completedActionCount = () => isDryRun ? preflightCount : appliedCount;
+  const completedActionCount = () => aiApprovedCount;
   const reachedRunLimit = () => completedActionCount() >= runLimit;
   const reachedCandidateLimit = () => isDryRun && dryRunCandidateCount >= 1;
 
@@ -261,11 +262,11 @@ export async function main(runMode: RunMode = resolveRunMode()) {
           return;
         }
 
-        if (!pipeline.reserveApply(job.jobId, completedActionCount(), runLimit)) {
-          record(job, 'skipped', isDryRun ? 'Dry-run 唯一表單檢查名額已保留給先完成評估的職缺' : '本次投遞名額已保留給先完成評估的職缺', location, evaluation.score);
+        if (aiApprovedCount >= runLimit) {
+          record(job, 'skipped', '本次投遞名額已達上限（AI 已判定通過）', location, evaluation.score);
           return;
         }
-        slotReserved = true;
+        aiApprovedCount++;
 
         const content = await aiService.generateCustomizedContent(job.title, job.company, jdText, {
           strengths: evaluation.strengths,
@@ -280,7 +281,6 @@ export async function main(runMode: RunMode = resolveRunMode()) {
         console.error(`AI 處理失敗 (${job.jobId}):`, error);
         record(job, 'failed', `AI 評估／自薦信生成失敗: ${error instanceof Error ? error.message : String(error)}`, location);
       } finally {
-        if (slotReserved && !handedToApply) pipeline.releaseApply(job.jobId);
         if (!handedToApply) pipeline.finish(job.jobId);
       }
     }).catch(error => console.error(`LLM queue task 未處理錯誤 (${job.jobId}):`, error));

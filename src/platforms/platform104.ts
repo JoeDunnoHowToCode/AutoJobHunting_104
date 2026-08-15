@@ -707,11 +707,17 @@ export class Platform104 extends JobPlatform {
 
       console.log('Submitting application...');
       await inspection.submitButton.click();
-      await session.targetPage.waitForTimeout(4000);
-
-      const resultText = await this.getBodyText(session.targetPage);
+      
+      // 動態等待成功提示出現，最多等待 15 秒，避免因為 104 伺服器慢而誤判失敗
       const successIndicators = ['應徵完成', '應徵已送出', '送出應徵成功', '您已成功應徵'];
-      return successIndicators.some(indicator => resultText.includes(indicator));
+      const successRegex = new RegExp(successIndicators.join('|'));
+      
+      try {
+        await session.targetPage.getByText(successRegex).first().waitFor({ state: 'visible', timeout: 15000 });
+        return true;
+      } catch {
+        return false;
+      }
     } catch (err: any) {
       if (err instanceof PlatformAccessError) throw err;
       console.error('Error during job application:', err);
