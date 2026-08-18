@@ -1,4 +1,4 @@
-import { EvaluationResult, CustomizationResult } from '../types';
+import { EvaluationResult, CustomizationResult, DecisionType } from '../types';
 
 export interface LLMProvider {
   evaluateJob(
@@ -14,7 +14,7 @@ export interface LLMProvider {
     evaluationContext?: {
       strengths?: string[];
       gaps?: string[];
-      decision?: 'APPLY' | 'MAYBE' | 'SKIP';
+      decision?: DecisionType;
     }
   ): Promise<CustomizationResult>;
 }

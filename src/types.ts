@@ -17,13 +17,15 @@ export interface ScoreBreakdown {
   bonusMatch: number;       // 0-15
 }
 
+export type DecisionType = 'apply' | 'maybe' | 'skip';
+
 // --- Full Evaluation Result (new, richer interface) ---
 
 export interface JobEvaluationResult {
   totalScore: number;
   breakdown: ScoreBreakdown;
   confidence: number;  // 0.0 - 1.0
-  decision: 'APPLY' | 'MAYBE' | 'SKIP';
+  decision: DecisionType;
   strengths: string[];
   gaps: string[];
   mustHaveMatches: RequirementMatch[];
@@ -40,7 +42,7 @@ export interface EvaluationResult {
   // New fields (available when using upgraded evaluation)
   breakdown?: ScoreBreakdown;
   confidence?: number;
-  decision?: 'APPLY' | 'MAYBE' | 'SKIP';
+  decision?: DecisionType;
   strengths?: string[];
   gaps?: string[];
   mustHaveMatches?: RequirementMatch[];
@@ -50,7 +52,8 @@ export interface EvaluationResult {
 
 export interface CustomizationResult {
   coverLetter: string;  // Self-recommendation letter (自我推薦信), target ~200 chars
-  optimizedSelfIntro: string; // Tailored self-introduction (自我介紹) for 104 resume
+  // 【註記保留】：104 應徵表單僅有自薦信輸入框，目前無線上履歷自介自動填寫機制，暫時註解停用，保留待未來線上履歷編輯功能使用。
+  // optimizedSelfIntro?: string; // Tailored self-introduction (自我介紹) for 104 resume
 }
 
 // --- Zod Schemas for LLM Output Validation ---
@@ -77,7 +80,8 @@ export const EvaluationOutputSchema = z.object({
 
 export const CustomizationOutputSchema = z.object({
   coverLetter: z.string().min(10),
-  optimizedSelfIntro: z.string().min(10),
+  // 【註記保留】：暫時註解停用，保留未來線上履歷編輯功能使用
+  // optimizedSelfIntro: z.string().min(10).optional(),
 });
 
 export type EvaluationOutput = z.infer<typeof EvaluationOutputSchema>;

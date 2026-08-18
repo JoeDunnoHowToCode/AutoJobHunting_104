@@ -87,23 +87,23 @@ export class GeminiProvider implements LLMProvider {
   private computeDecision(
     totalScore: number,
     mustHaveMatches: RequirementMatch[]
-  ): 'APPLY' | 'MAYBE' | 'SKIP' {
+  ): 'apply' | 'maybe' | 'skip' {
     const criticalMissing = mustHaveMatches.filter(m => m.status === 'missing').length;
     const threshold = config.scoreThreshold;
 
     if (totalScore >= threshold && criticalMissing === 0) {
-      return 'APPLY';
+      return 'apply';
     }
     if (totalScore >= threshold - 15 && criticalMissing <= 1) {
-      return 'MAYBE';
+      return 'maybe';
     }
     if (criticalMissing >= 3) {
-      return 'SKIP';
+      return 'skip';
     }
     if (totalScore >= threshold) {
-      return 'MAYBE';
+      return 'maybe';
     }
-    return 'SKIP';
+    return 'skip';
   }
 
   public async evaluateJob(
@@ -147,7 +147,7 @@ export class GeminiProvider implements LLMProvider {
         data.breakdown.bonusMatch;
 
       const decision = this.computeDecision(totalScore, data.mustHaveMatches);
-      const shouldApply = totalScore >= config.scoreThreshold && decision !== 'SKIP';
+      const shouldApply = totalScore >= config.scoreThreshold && decision !== 'skip';
 
       return {
         score: totalScore,
@@ -170,7 +170,7 @@ export class GeminiProvider implements LLMProvider {
     evaluationContext?: {
       strengths?: string[];
       gaps?: string[];
-      decision?: 'APPLY' | 'MAYBE' | 'SKIP';
+      decision?: 'apply' | 'maybe' | 'skip';
     }
   ): Promise<CustomizationResult> {
     if (!this.ai) {
@@ -208,7 +208,8 @@ export class GeminiProvider implements LLMProvider {
 
       return {
         coverLetter: result.data.coverLetter,
-        optimizedSelfIntro: result.data.optimizedSelfIntro,
+        // 【註記保留】：暫時註解停用
+        // optimizedSelfIntro: result.data.optimizedSelfIntro,
       };
     }, `Gemini API 生成自薦信 ("${jobTitle}")`);
   }

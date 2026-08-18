@@ -74,15 +74,15 @@ export class OpenAIProvider implements LLMProvider {
   private computeDecision(
     totalScore: number,
     mustHaveMatches: RequirementMatch[]
-  ): 'APPLY' | 'MAYBE' | 'SKIP' {
+  ): 'apply' | 'maybe' | 'skip' {
     const criticalMissing = mustHaveMatches.filter(m => m.status === 'missing').length;
     const threshold = config.scoreThreshold;
 
-    if (totalScore >= threshold && criticalMissing === 0) return 'APPLY';
-    if (totalScore >= threshold - 15 && criticalMissing <= 1) return 'MAYBE';
-    if (criticalMissing >= 3) return 'SKIP';
-    if (totalScore >= threshold) return 'MAYBE';
-    return 'SKIP';
+    if (totalScore >= threshold && criticalMissing === 0) return 'apply';
+    if (totalScore >= threshold - 15 && criticalMissing <= 1) return 'maybe';
+    if (criticalMissing >= 3) return 'skip';
+    if (totalScore >= threshold) return 'maybe';
+    return 'skip';
   }
 
   public async evaluateJob(
@@ -119,7 +119,7 @@ export class OpenAIProvider implements LLMProvider {
     const result = EvaluationOutputSchema.safeParse(parsed);
 
     if (!result.success) {
-      throw new Error(`[OpenAIProvider] JSON 結構驗證失敗: ${result.error.issues.map(i => i.message).join(', ')}`);
+      throw new Error(`[OpenAIProvider] 評估結果 JSON 結構驗證失敗: ${result.error.issues.map(i => i.message).join(', ')}`);
     }
 
     const data: EvaluationOutput = result.data;
@@ -131,7 +131,7 @@ export class OpenAIProvider implements LLMProvider {
       data.breakdown.bonusMatch;
 
     const decision = this.computeDecision(totalScore, data.mustHaveMatches);
-    const shouldApply = totalScore >= config.scoreThreshold && decision !== 'SKIP';
+    const shouldApply = totalScore >= config.scoreThreshold && decision !== 'skip';
 
     return {
       score: totalScore,
@@ -154,7 +154,7 @@ export class OpenAIProvider implements LLMProvider {
     evaluationContext?: {
       strengths?: string[];
       gaps?: string[];
-      decision?: 'APPLY' | 'MAYBE' | 'SKIP';
+      decision?: 'apply' | 'maybe' | 'skip';
     }
   ): Promise<CustomizationResult> {
     if (!this.client) {
@@ -197,7 +197,8 @@ export class OpenAIProvider implements LLMProvider {
 
     return {
       coverLetter: result.data.coverLetter,
-      optimizedSelfIntro: result.data.optimizedSelfIntro,
+      // 【註記保留】：暫時註解停用
+      // optimizedSelfIntro: result.data.optimizedSelfIntro,
     };
     }, `OpenAI API 生成自薦信 ("${jobTitle}")`);
   }

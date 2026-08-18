@@ -399,7 +399,23 @@ export async function main(runMode: RunMode = resolveRunMode()) {
   }
 
   if (!isDryRun && (appliedJobs.length > 0 || failedJobs.length > 0)) {
-    const report = `<b>📊 本次投遞報告</b>\n\n成功投遞：${appliedJobs.length}\n投遞失敗：${failedJobs.length}\n略過：${skippedJobs.length}`;
+    let report = `<b>📊 本次投遞報告</b>\n\n`;
+
+    if (appliedJobs.length > 0) {
+      report += `<b>✅ 成功投遞 (${appliedJobs.length})</b>\n`;
+      appliedJobs.forEach(j => {
+        report += `• <b>${j.title}</b> (${j.company})\n  地點: ${j.location}\n  AI 評分: ${j.score} 分\n  <a href="${j.url}">🔗 點此查看</a>\n\n`;
+      });
+    }
+
+    if (failedJobs.length > 0) {
+      report += `<b>❌ 投遞失敗 (${failedJobs.length})</b>\n`;
+      failedJobs.forEach(j => {
+        report += `• <b>${j.title}</b> (${j.company})\n  <a href="${j.url}">🔗 點此查看</a>\n\n`;
+      });
+    }
+
+    report += `<i>總結: 處理 ${processedInThisRun.length} 筆，略過 ${skippedJobs.length} 筆。</i>`;
     await sendTelegramMessage(report);
   }
 }

@@ -45,8 +45,9 @@ export const CUSTOMIZATION_JSON_SCHEMA = {
   type: 'object' as const,
   properties: {
     coverLetter:        { type: 'string' as const },
-    optimizedSelfIntro: { type: 'string' as const },
+    // 【註記保留】：104 投遞目前僅填寫自薦信，暫時註解履歷自我介紹欄位，保留未來線上履歷編輯功能使用
+    // optimizedSelfIntro: { type: 'string' as const },
   },
-  required: ['coverLetter', 'optimizedSelfIntro'] as const,
+  required: ['coverLetter'] as const,
   additionalProperties: false,
 };

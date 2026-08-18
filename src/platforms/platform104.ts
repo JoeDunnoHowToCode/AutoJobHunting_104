@@ -709,7 +709,7 @@ export class Platform104 extends JobPlatform {
       await inspection.submitButton.click();
       
       // 動態等待成功提示出現，最多等待 15 秒，避免因為 104 伺服器慢而誤判失敗
-      const successIndicators = ['應徵完成', '應徵已送出', '送出應徵成功', '您已成功應徵'];
+      const successIndicators = ['應徵完成', '應徵已送出', '送出應徵成功', '您已成功應徵', '應徵成功'];
       const successRegex = new RegExp(successIndicators.join('|'));
       
       try {

@@ -163,6 +163,37 @@ npm run diagnose-104:job -- 8x8yl
 
 > 注意：開啟「我要應徵」表單本身仍是對 104 的真實互動，平台可能記錄該頁面瀏覽或表單開啟事件；dry-run 只能保證本程式不會傳送履歷內容或完成投遞，不能保證平台端完全沒有觀測紀錄。
 
+---
+
+## 🧪 測試方式與驗證項目 (Testing Suite)
+
+本專案提供涵蓋單元測試、LLM 冒煙測試至端對端表單預檢的多層級測試架構：
+
+### 1. 離線單元測試 (Unit Tests - 快速且無需 API / 網路)
+
+| 測試指令 | 測試目標與驗證項目 |
+| :--- | :--- |
+| `npm test -- test/prompts.spec.ts` | **自薦信雙軌動態路由與 Guardrails 測試**：驗證 `apply` (Plan 1 - STAR 量化型)、`maybe` (Plan 2 - 特質遷移型)、`skip` 阻斷防護、Context 注入與 5 大硬性防護規則。 |
+| `npm run test-pipeline` | **Pipeline 滑動窗口與佇列控制**：驗證 DB O(1) 索引去重、`PipelineState` 併發鎖與 `reserveApply` 名額保留、`applyQueue` 嚴格單線、以及 LLM 暫時性錯誤指數退避重試。 |
+| `npm run test-application-action` | **應徵分流與唯讀隔離**：驗證 `--dry-run` 唯讀模式與 `live` 正式模式的 API 邊界隔離，確保 dry-run 絕不呼叫正式送出方法且不寫入 DB。 |
+| `npm run test-session-state` | **Session 快照與 Cookie 最小化**：驗證僅保存 104 官方主網域與登入子網域之憑證，嚴格過濾第三方追蹤與偽冒網域。 |
+| `npm run test-preflight-104` | **單筆 Preflight 安全邊界**：驗證表單預檢必須傳入明確 Job ID，且全程不讀取履歷、不呼叫 LLM、不寫入 DB。 |
+| `npm run test-104-platform` | **104 平台解析器**：驗證 104 職缺搜尋、詳情頁 JD 擷取與表單狀態解析邏輯。 |
+
+### 2. 線上冒煙與自薦信生成測試 (Online AI Tests)
+
+* `npm run test-cover-letter`：**自薦信客製化生成測試**（支援兩大模式）。
+  * **模式 1（指定職缺）**：`npm run test-cover-letter -- <jobId>`（例如 `npm run test-cover-letter -- 93csc`）
+  * **模式 2（隨機抽樣）**：`npm run test-cover-letter`（自動自 `applyRecord.json` 隨機抽取過往職缺進行即時生成驗證）
+  * **驗證重點**：即時輸出 AI 評估分數、決策結果 (`apply`/`maybe`/`skip`)、優勢亮點、待補強領域，以及動態切換之自薦信風格（Plan 1 STAR 量化型 vs Plan 2 特質遷移型）與字數統計。
+* `npm run test-ai`：**LLM API 基礎連線測試**（驗證目前設定的模型基本連線與輸出結構）。
+
+### 3. 端對端唯讀預檢 (E2E Preflight & Review)
+
+* `npm run dry-run`：**全流程唯讀執行**（搜尋 → JD → AI 評估 → 自薦信生成 → 開啟表單預檢；不填寫、不勾選、不送出、不寫入資料庫）。
+* `npm run dry-run:review`：**人工表單檢查模式**（於 Chrome 視窗停留在真實表單供肉眼核對，按 Enter 安全關閉）。
+* `npm run preflight-104:review -- <jobId>`：**指定單一職缺表單檢查**。
+
 ### ⏰ 排程自動化
 可以將指令加入系統排程（如 `crontab`）中，讓機器人每天定時為您搜尋並投遞新職缺。
 ```bash
