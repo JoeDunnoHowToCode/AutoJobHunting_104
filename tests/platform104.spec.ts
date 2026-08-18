@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { classify104Navigation } from './platform104';
+import { classify104Navigation } from '../src/platforms/platform104';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -47,8 +47,8 @@ function run(): void {
   );
 
   console.log('[8/11] JD、搜尋與應徵頁的 403 都必須 fail closed');
-  const platformSource = fs.readFileSync(path.resolve(__dirname, 'platform104.ts'), 'utf8');
-  const baseSource = fs.readFileSync(path.resolve(__dirname, 'base.ts'), 'utf8');
+  const platformSource = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'platforms', 'platform104.ts'), 'utf8');
+  const baseSource = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'platforms', 'base.ts'), 'utf8');
   assert(
     platformSource.includes('status === 403') && platformSource.includes('Stop the complete pipeline'),
     'JD 403 必須被明確分類為全流程停止條件',

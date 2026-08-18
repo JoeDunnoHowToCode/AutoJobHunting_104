@@ -6,13 +6,13 @@ import {
   executeApplicationAction,
   getRuntimePipelineLimits,
   resolveRunMode,
-} from './application-action';
-import { JobDatabase } from './db';
+} from '../src/application-action';
+import { JobDatabase } from '../src/db';
 import {
   ApplicationPreflightResult,
   JobPlatform,
   ScrapedJob,
-} from './platforms/base';
+} from '../src/platforms/base';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -128,7 +128,7 @@ async function run(): Promise<void> {
   }
 
   console.log('[6/6] 104 preflight 方法不得修改或送出表單');
-  const platformSource = fs.readFileSync(path.resolve(__dirname, 'platforms', 'platform104.ts'), 'utf8');
+  const platformSource = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'platforms', 'platform104.ts'), 'utf8');
   const preflightStart = platformSource.indexOf('public async preflightApplication');
   const liveSubmitStart = platformSource.indexOf('public async applyToJob');
   assert(preflightStart >= 0 && liveSubmitStart > preflightStart, '找不到預期的 preflight / live 方法邊界');

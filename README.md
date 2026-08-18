@@ -173,7 +173,7 @@ npm run diagnose-104:job -- 8x8yl
 
 | 測試指令 | 測試目標與驗證項目 |
 | :--- | :--- |
-| `npm run test-prompts` (或 `npm test -- src/prompts.spec.ts`) | **自薦信雙軌動態路由與 Guardrails 測試**：驗證 `apply` (Plan 1 - STAR 量化型)、`maybe` (Plan 2 - 特質遷移型)、`skip` 阻斷防護、Context 注入與 5 大硬性防護規則。 |
+| `npm run test-prompts` (或 `npm test -- tests/prompts.spec.ts`) | **自薦信雙軌動態路由與 Guardrails 測試**：驗證 `apply` (Plan 1 - STAR 量化型)、`maybe` (Plan 2 - 特質遷移型)、`skip` 阻斷防護、Context 注入與 5 大硬性防護規則。 |
 | `npm run test-pipeline` | **Pipeline 滑動窗口與佇列控制**：驗證 DB O(1) 索引去重、`PipelineState` 併發鎖與 `reserveApply` 名額保留、`applyQueue` 嚴格單線、以及 LLM 暫時性錯誤指數退避重試。 |
 | `npm run test-application-action` | **應徵分流與唯讀隔離**：驗證 `--dry-run` 唯讀模式與 `live` 正式模式的 API 邊界隔離，確保 dry-run 絕不呼叫正式送出方法且不寫入 DB。 |
 | `npm run test-session-state` | **Session 快照與 Cookie 最小化**：驗證僅保存 104 官方主網域與登入子網域之憑證，嚴格過濾第三方追蹤與偽冒網域。 |

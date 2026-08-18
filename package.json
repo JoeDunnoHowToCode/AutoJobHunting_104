@@ -15,14 +15,14 @@
     "inspect-apply": "AUTOJOB_HEADLESS=false ts-node src/inspect-application.ts",
     "login": "ts-node src/login.ts",
     "test": "ts-node",
-    "test-ai": "ts-node src/ai-smoke.ts",
-    "test-cover-letter": "ts-node src/cover-letter-test.ts",
-    "test-prompts": "ts-node src/prompts.spec.ts",
-    "test-pipeline": "ts-node src/pipeline.spec.ts",
-    "test-application-action": "ts-node src/application-action.spec.ts",
-    "test-preflight-104": "ts-node src/preflight-104.spec.ts",
-    "test-session-state": "ts-node src/session-state.spec.ts",
-    "test-104-platform": "ts-node src/platforms/platform104.spec.ts"
+    "test-ai": "ts-node tests/ai-smoke.ts",
+    "test-cover-letter": "ts-node tests/cover-letter-test.ts",
+    "test-prompts": "ts-node tests/prompts.spec.ts",
+    "test-pipeline": "ts-node tests/pipeline.spec.ts",
+    "test-application-action": "ts-node tests/application-action.spec.ts",
+    "test-preflight-104": "ts-node tests/preflight-104.spec.ts",
+    "test-session-state": "ts-node tests/session-state.spec.ts",
+    "test-104-platform": "ts-node tests/platform104.spec.ts"
   },
   "dependencies": {
     "@google/genai": "latest",

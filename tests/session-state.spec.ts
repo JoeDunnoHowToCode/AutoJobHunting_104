@@ -1,4 +1,4 @@
-import { filter104StorageState, SavedStorageState } from './session-state';
+import { filter104StorageState, SavedStorageState } from '../src/session-state';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);

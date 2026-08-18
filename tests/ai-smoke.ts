@@ -1,5 +1,5 @@
-import { LLMFactory } from './ai/factory';
-import { config } from './config';
+import { LLMFactory } from '../src/ai/factory';
+import { config } from '../src/config';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);

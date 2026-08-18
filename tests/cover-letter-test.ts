@@ -1,9 +1,9 @@
 import * as fs from 'fs';
 import { Page } from 'playwright';
-import { config } from './config';
-import { Platform104 } from './platforms/platform104';
-import { LLMFactory } from './ai/factory';
-import { JobRecord } from './db';
+import { config } from '../src/config';
+import { Platform104 } from '../src/platforms/platform104';
+import { LLMFactory } from '../src/ai/factory';
+import { JobRecord } from '../src/db';
 
 interface TargetJobInfo {
   jobId: string;

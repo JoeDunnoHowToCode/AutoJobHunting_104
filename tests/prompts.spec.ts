@@ -1,4 +1,4 @@
-import { buildCustomizationPrompt, CustomizationPromptParams } from './ai/prompts';
+import { buildCustomizationPrompt, CustomizationPromptParams } from '../src/ai/prompts';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {

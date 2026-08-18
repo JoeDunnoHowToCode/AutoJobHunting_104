@@ -6,7 +6,7 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 function run(): void {
-  const source = fs.readFileSync(path.resolve(__dirname, 'preflight-104.ts'), 'utf8');
+  const source = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'preflight-104.ts'), 'utf8');
   const packageJson = fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8');
 
   console.log('[1/3] 單筆 preflight 必須要求明確 job ID');

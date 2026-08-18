@@ -2,9 +2,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import PQueue from 'p-queue';
-import { retryTransient } from './ai/retry';
-import { JobDatabase, JobRecord } from './db';
-import { PipelineState } from './pipeline-state';
+import { retryTransient } from '../src/ai/retry';
+import { JobDatabase, JobRecord } from '../src/db';
+import { PipelineState } from '../src/pipeline-state';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
