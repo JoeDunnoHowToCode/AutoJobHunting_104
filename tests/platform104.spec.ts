@@ -69,10 +69,14 @@ function run(): void {
   assert(baseSource.includes('getPersistentContext()'), '應提供 getPersistentContext 方法');
   assert(platformSource.includes('humanType'), '應徵流程必須使用 humanType 進行擬真人手輸入');
 
-  console.log('[11/11] 應徵與搜尋分頁皆由 Persistent Context 產出');
+  console.log('[11/11] 應徵由 Persistent Context 產出，搜尋與詳情由 Unauth Context 產出');
   assert(
     baseSource.includes('await this.getPersistentContext()'),
-    '頁面必須由統一的 Persistent Context 產出',
+    '應徵頁面必須由 Persistent Context 產出',
+  );
+  assert(
+    baseSource.includes('await this.getUnauthenticatedContext()'),
+    '搜尋與詳情頁面必須由 Unauthenticated Context 產出',
   );
 }
 

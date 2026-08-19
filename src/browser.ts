@@ -1,6 +1,7 @@
 import { chromium, Browser, BrowserContext } from 'playwright';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { config } from './config';
 
 /**
@@ -73,6 +74,7 @@ export async function launchStealthPersistentContext(
 
   const launchOptions: any = {
     headless,
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     viewport: { width: 1440, height: 900 },
     locale: 'zh-TW',
     timezoneId: 'Asia/Taipei',
@@ -121,6 +123,83 @@ export async function launchStealthPersistentContext(
   process.once('SIGTERM', cleanup);
 
   return context;
+}
+
+/**
+ * Launches an ephemeral, unauthenticated BrowserContext for public search and scraping.
+ * Uses a clean temporary profile to prevent 104 WAF 403 blocks in headless mode.
+ */
+export async function launchStealthContext(
+  options: { headless?: boolean } = {}
+): Promise<{ context: BrowserContext; close: () => Promise<void> }> {
+  const headless = options.headless ?? config.headless;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'autojob-unauth-'));
+
+  const baseArgs = [
+    '--test-type',
+    '--disable-blink-features=AutomationControlled',
+    '--disable-dev-shm-usage',
+    '--disk-cache-size=52428800',
+    '--disable-gpu-shader-disk-cache',
+    '--disable-component-update',
+    '--window-size=1440,900',
+    '--lang=zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+  ];
+
+  if (headless) {
+    baseArgs.push('--headless=new');
+  }
+
+  const launchOptions: any = {
+    headless,
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    viewport: { width: 1440, height: 900 },
+    locale: 'zh-TW',
+    timezoneId: 'Asia/Taipei',
+    args: baseArgs,
+    chromiumSandbox: true,
+    ignoreDefaultArgs: ['--enable-automation', '--no-sandbox'],
+  };
+
+  const preferredChannel = config.browserChannel || 'chrome';
+  let context: BrowserContext;
+
+  try {
+    context = await chromium.launchPersistentContext(tempDir, {
+      ...launchOptions,
+      channel: preferredChannel,
+    });
+    console.log(`[Browser] Unauth Context | Channel: ${preferredChannel} | Headless: ${headless}`);
+  } catch (err: any) {
+    context = await chromium.launchPersistentContext(tempDir, launchOptions);
+    console.log(`[Browser] Unauth Context | Channel: bundled chromium | Headless: ${headless}`);
+  }
+
+  await context.addInitScript(() => {
+    try {
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined,
+      });
+      if (navigator.userAgent.includes('HeadlessChrome')) {
+        const cleanUa = navigator.userAgent.replace('HeadlessChrome', 'Chrome');
+        Object.defineProperty(navigator, 'userAgent', {
+          get: () => cleanUa,
+        });
+      }
+    } catch {}
+  });
+
+  return {
+    context,
+    close: async () => {
+      try {
+        await context.close();
+      } catch {}
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {}
+    },
+  };
 }
 
 /** Legacy helper for backward compatibility */

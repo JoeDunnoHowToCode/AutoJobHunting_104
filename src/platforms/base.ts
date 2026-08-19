@@ -1,7 +1,7 @@
 import { BrowserContext, Page } from 'playwright';
 import * as fs from 'fs';
 import { config } from '../config';
-import { launchStealthPersistentContext } from '../browser';
+import { launchStealthContext, launchStealthPersistentContext } from '../browser';
 import { filter104StorageState } from '../session-state';
 
 export interface ScrapedJob {
@@ -49,16 +49,22 @@ export interface ApplicationPreflightOptions {
 
 export abstract class JobPlatform {
   /**
-   * Persistent BrowserContext with stealth mitigations.
-   * Manages cookies, cache, and session state on disk in config.userDataDir.
+   * Persistent BrowserContext with stealth mitigations and saved login session.
+   * Used for authenticated operations (Apply form submission).
    */
   protected persistentContext: BrowserContext | null = null;
+  /**
+   * Ephemeral unauthenticated BrowserContext for public search and JD scraping.
+   * Avoids 104 WAF 403 blocks triggered by session cookies in headless mode.
+   */
+  protected unauthContext: BrowserContext | null = null;
+  private unauthCloseHandler: (() => Promise<void>) | null = null;
   private legacyCookiesImported = false;
 
   public abstract readonly platformName: string;
 
   /**
-   * Initializes or returns the shared stealth persistent context.
+   * Initializes or returns the shared stealth persistent context for authenticated actions.
    */
   public async getPersistentContext(): Promise<BrowserContext> {
     if (this.persistentContext) {
@@ -95,30 +101,42 @@ export abstract class JobPlatform {
     return this.persistentContext;
   }
 
-  private initialPageClaimed = false;
-
-  private async getAvailablePage(): Promise<Page> {
-    const context = await this.getPersistentContext();
-    if (!this.initialPageClaimed) {
-      this.initialPageClaimed = true;
-      const initialPage = context.pages().find(p => !p.isClosed());
-      if (initialPage) {
-        return initialPage;
+  /**
+   * Initializes or returns an unauthenticated, clean browser context for public searching and JD scraping.
+   * Prevents 104 WAF 403 blocks in headless mode.
+   */
+  public async getUnauthenticatedContext(): Promise<BrowserContext> {
+    if (this.unauthContext) {
+      try {
+        this.unauthContext.pages();
+        return this.unauthContext;
+      } catch {
+        this.unauthContext = null;
+        this.unauthCloseHandler = null;
       }
     }
-    return context.newPage();
+
+    const { context, close } = await launchStealthContext({
+      headless: config.headless,
+    });
+    this.unauthContext = context;
+    this.unauthCloseHandler = close;
+    return context;
   }
 
   public async getSearchPage(): Promise<Page> {
-    return this.getAvailablePage();
+    const context = await this.getUnauthenticatedContext();
+    return context.newPage();
   }
 
   public async getDetailPage(): Promise<Page> {
-    return this.getAvailablePage();
+    const context = await this.getUnauthenticatedContext();
+    return context.newPage();
   }
 
   public async getApplyPage(): Promise<Page> {
-    return this.getAvailablePage();
+    const context = await this.getPersistentContext();
+    return context.newPage();
   }
 
   public async closePage(page: Page): Promise<void> {
@@ -130,7 +148,19 @@ export abstract class JobPlatform {
   }
 
   public async closeBrowsers(): Promise<void> {
-    this.initialPageClaimed = false;
+    if (this.unauthCloseHandler) {
+      try {
+        await this.unauthCloseHandler();
+      } catch {}
+      this.unauthContext = null;
+      this.unauthCloseHandler = null;
+    } else if (this.unauthContext) {
+      try {
+        await this.unauthContext.close();
+      } catch {}
+      this.unauthContext = null;
+    }
+
     if (this.persistentContext) {
       try {
         await this.persistentContext.close();
