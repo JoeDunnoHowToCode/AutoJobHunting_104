@@ -71,7 +71,7 @@ export abstract class JobPlatform {
     }
 
     this.persistentContext = await launchStealthPersistentContext(config.userDataDir, {
-      headless: false, // 104 workflows remain visible for safety and anti-bot stability
+      headless: config.headless,
     });
 
     // Import legacy auth_state.json cookies if present to prime the profile
