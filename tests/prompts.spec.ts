@@ -108,12 +108,16 @@ function run(): void {
     assert(prompt.includes('"coverLetter"'), "輸出 JSON 格式必須包含 'coverLetter'");
     assert(!prompt.includes('"optimizedSelfIntro"'), "輸出 JSON 格式不得包含已停用的 'optimizedSelfIntro'");
 
-    // 五大硬性防護規則
+    // 五大硬性防護規則與去機器人化特徵
     assert(prompt.includes('嚴禁空泛寒暄'), 'Prompt 必須包含防護規則：嚴禁空泛寒暄');
     assert(prompt.includes('絕對事實錨定'), 'Prompt 必須包含防護規則：絕對事實錨定');
     assert(prompt.includes('第一人稱視角翻轉'), 'Prompt 必須包含防護規則：第一人稱視角翻轉');
     assert(prompt.includes('弱點主動覆蓋'), 'Prompt 必須包含防護規則：弱點主動覆蓋');
     assert(prompt.includes('長度嚴格限制'), 'Prompt 必須包含防護規則：長度嚴格限制');
+    assert(prompt.includes('爆發力（Burstiness）'), 'Prompt 必須包含反機器人規則：爆發力句長控制');
+    assert(prompt.includes('困惑度（Perplexity）'), 'Prompt 必須包含反機器人規則：提高困惑度與真實細節');
+    assert(prompt.includes('嚴格負面詞彙表'), 'Prompt 必須包含反機器人規則：嚴格負面詞彙表');
+    assert(prompt.includes('破除剛性句型'), 'Prompt 必須包含反機器人規則：破除剛性句型');
   }
 }
 
