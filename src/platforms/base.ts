@@ -169,7 +169,12 @@ export abstract class JobPlatform {
     }
   }
 
-  public abstract searchJobs(page: Page, keyword: string, pageNum?: number): Promise<ScrapedJob[]>;
+  public abstract searchJobs(
+    page: Page,
+    keyword: string,
+    pageNum?: number,
+    options?: { order?: number; isnew?: number }
+  ): Promise<ScrapedJob[]>;
   public abstract getJobDescription(page: Page, jobUrl: string): Promise<{ jdText: string; location: string }>;
 
   /**

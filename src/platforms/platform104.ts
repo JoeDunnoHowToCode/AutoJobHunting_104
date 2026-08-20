@@ -428,9 +428,23 @@ export class Platform104 extends JobPlatform {
     }
   }
 
-  public async searchJobs(page: Page, keyword: string, pageNum: number = 1): Promise<ScrapedJob[]> {
-    console.log(`Searching for jobs on 104 with keyword: "${keyword}", Page: ${pageNum}...`);
-    let searchUrl = `https://www.104.com.tw/jobs/search/?clean=1&ro=0&keyword=${encodeURIComponent(keyword)}&isnew=7&order=12&asc=0&page=${pageNum}`;
+  public async searchJobs(
+    page: Page,
+    keyword: string,
+    pageNum: number = 1,
+    options?: { order?: number; isnew?: number }
+  ): Promise<ScrapedJob[]> {
+    const order = options?.order ?? 12;
+    const isnew = options?.isnew ?? 30;
+    const orderNames: Record<number, string> = {
+      2: '最新更新',
+      12: '推薦符合度',
+      1: '相關度',
+      7: '應徵人數少',
+    };
+    const orderLabel = orderNames[order] || `模式 ${order}`;
+    console.log(`Searching for jobs on 104 with keyword: "${keyword}", Page: ${pageNum} (排序: ${orderLabel}, 範圍: ${isnew}天內)...`);
+    let searchUrl = `https://www.104.com.tw/jobs/search/?clean=1&ro=0&keyword=${encodeURIComponent(keyword)}&isnew=${isnew}&order=${order}&asc=0&page=${pageNum}`;
     
     if (config.areas && config.areas.length > 0) {
       const areaCodes = config.areas.map(areaName => AREA_MAP[areaName] || '').filter(code => code !== '');

@@ -329,6 +329,10 @@ export async function main(runMode: RunMode = resolveRunMode()) {
         let pageNum = 1;
         let consecutiveAlreadyProcessed = 0;
 
+        // 排序多樣化輪巡：隨機選取排序模式（2:最新發布, 12:推薦符合度, 1:相關度, 7:應徵人數少）
+        const sortOrders = [2, 12, 1, 7];
+        const selectedOrder = sortOrders[Math.floor(Math.random() * sortOrders.length)];
+
         while (!pipelineStopped && !reachedRunLimit() && !reachedCandidateLimit() && pageNum <= 100) {
           await waitForCapacity();
           if (pipelineStopped || reachedRunLimit()) break;
@@ -337,7 +341,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
           let jobs: ScrapedJob[] = [];
           try {
             searchPage = await platform.getSearchPage();
-            jobs = await platform.searchJobs(searchPage, keyword, pageNum);
+            jobs = await platform.searchJobs(searchPage, keyword, pageNum, { order: selectedOrder, isnew: 30 });
           } catch (error) {
             if (error instanceof PlatformAccessError) {
               await stopForPlatformAccess(platform, undefined, error.message);
@@ -370,7 +374,10 @@ export async function main(runMode: RunMode = resolveRunMode()) {
           }
 
           if (consecutiveAlreadyProcessed >= 25 && pageNum >= 2) break;
-          pageNum++;
+
+          // 頁碼跳轉探勘：第一頁優先巡查，後續頁碼以 1~3 頁隨機跨度推進（例如 Page 1 -> 2/3/4）
+          const pageStep = Math.floor(Math.random() * 3) + 1;
+          pageNum += pageStep;
           await sleep(Math.floor(Math.random() * 2000) + 2000);
         }
       }
