@@ -195,35 +195,27 @@ async function run(): Promise<void> {
       continue;
     }
 
-    // Step 3: Customization
+    // Step 3: Single-Shot Output Display
     const strategyName = evaluation.decision === 'maybe'
       ? 'Plan 2 - 特質遷移與弱點補強型'
       : 'Plan 1 - STAR 成就量化型';
 
-    console.log(`\n[3/3] 依決策 [${evaluation.decision}] 套用「${strategyName}」生成自薦信...`);
+    console.log(`\n[3/3] 單次 API 同步完成！依決策 [${evaluation.decision}] 套用「${strategyName}」...`);
 
-    const customization = await provider.generateCustomizedContent(
-      jdData.title,
-      jdData.company,
-      jdData.jdText,
-      {
-        strengths: evaluation.strengths,
-        gaps: evaluation.gaps,
-        decision: evaluation.decision,
-      }
-    );
+    const coverLetter = (evaluation.coverLetter || '').trim();
 
     console.log('\n================================================================');
     console.log(`📄 生成的客製化自薦信 (Job ID: ${target.jobId})`);
     console.log('================================================================');
-    console.log(customization.coverLetter.trim());
+    console.log(coverLetter);
     console.log('================================================================');
     console.log('📊 測試摘要與重測指令');
     console.log(`- Job ID        : ${target.jobId}`);
     console.log(`- 職缺／公司    : ${jdData.title} | ${jdData.company}`);
     console.log(`- AI 決策／分數 : ${evaluation.decision} (${evaluation.score} 分)`);
     console.log(`- 採用路由策略  : ${strategyName}`);
-    console.log(`- 自薦信長度    : ${customization.coverLetter.trim().length} 字`);
+    console.log(`- 自薦信長度    : ${coverLetter.length} 字`);
+    console.log(`- API 呼叫次數  : 1 次 (One-Shot Unified)`);
     console.log(`\n👉 如需再次測試此職缺，請執行：`);
     console.log(`   npm run test-cover-letter -- ${target.jobId}`);
     console.log('================================================================\n');

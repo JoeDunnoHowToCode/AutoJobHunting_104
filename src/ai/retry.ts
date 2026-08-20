@@ -29,9 +29,14 @@ export async function retryTransient<T>(
       lastError = error;
       if (!isRetryable(error) || attempt === maxAttempts) throw error;
 
-      const baseDelay = 1000 * 2 ** (attempt - 1);
-      const jitteredDelay = Math.round(baseDelay * (0.75 + Math.random() * 0.5));
-      console.warn(`${context} 暫時性失敗；${jitteredDelay}ms 後進行第 ${attempt + 1}/${maxAttempts} 次嘗試。`);
+      const candidate = error as { status?: unknown; code?: unknown; message?: unknown };
+      const status = Number(candidate?.status ?? candidate?.code);
+      const message = String(candidate?.message ?? '');
+      const isRateLimit = status === 429 || /resource exhausted|rate limit/i.test(message);
+
+      const baseDelay = isRateLimit ? 12000 * attempt : 1000 * 2 ** (attempt - 1);
+      const jitteredDelay = Math.round(baseDelay * (0.85 + Math.random() * 0.3));
+      console.warn(`${context} ${isRateLimit ? '速率受限 (429)' : '暫時性失敗'}；${jitteredDelay}ms 後進行第 ${attempt + 1}/${maxAttempts} 次嘗試。`);
       await sleep(jitteredDelay);
     }
   }

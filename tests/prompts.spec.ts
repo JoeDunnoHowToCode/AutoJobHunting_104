@@ -119,6 +119,27 @@ function run(): void {
     assert(prompt.includes('嚴格負面詞彙表'), 'Prompt 必須包含反機器人規則：嚴格負面詞彙表');
     assert(prompt.includes('破除剛性句型'), 'Prompt 必須包含反機器人規則：破除剛性句型');
   }
+
+  // 5. 單次呼叫統合 Prompt 斷言 (Unified One-Shot Prompt Assertion)
+  console.log('[5/5] 單次呼叫統合 Prompt 斷言 (Unified One-Shot Evaluation + Cover Letter)...');
+  {
+    const { buildEvaluationPrompt } = require('../src/ai/prompts');
+    const unifiedPrompt = buildEvaluationPrompt({
+      resume: baseParams.resume,
+      companyName: baseParams.companyName,
+      jobTitle: baseParams.jobTitle,
+      sanitizedJd: baseParams.sanitizedJd,
+    });
+
+    assert(unifiedPrompt.includes('skillMatch'), "Unified Prompt 必須包含量化評分指標 'skillMatch'");
+    assert(unifiedPrompt.includes('experienceMatch'), "Unified Prompt 必須包含量化評分指標 'experienceMatch'");
+    assert(unifiedPrompt.includes('coverLetter'), "Unified Prompt 輸出格式必須包含 'coverLetter'");
+    assert(unifiedPrompt.includes('Plan 1'), "Unified Prompt 必須包含 'Plan 1'");
+    assert(unifiedPrompt.includes('Plan 2'), "Unified Prompt 必須包含 'Plan 2'");
+    assert(unifiedPrompt.includes('爆發力（Burstiness）'), "Unified Prompt 必須包含爆發力控制");
+    assert(unifiedPrompt.includes('嚴格負面詞彙表'), "Unified Prompt 必須包含負面詞彙表");
+    assert(unifiedPrompt.includes('絕對事實錨定'), "Unified Prompt 必須包含絕對事實錨定");
+  }
 }
 
 try {

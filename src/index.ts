@@ -104,7 +104,11 @@ export async function main(runMode: RunMode = resolveRunMode()) {
   const platforms: JobPlatform[] = [new Platform104()];
   const pipeline = new PipelineState();
   const jdQueue = new PQueue({ concurrency: runtimePipelineConfig.jdConcurrency });
-  const llmQueue = new PQueue({ concurrency: runtimePipelineConfig.aiConcurrency });
+  const llmQueue = new PQueue({
+    concurrency: runtimePipelineConfig.aiConcurrency,
+    interval: 4000, // Rate limiter: at most 1 request per 4s (15 RPM)
+    intervalCap: 1,
+  });
   const applyQueue = new PQueue({ concurrency: 1 });
   const processedInThisRun: JobRecord[] = [];
   const preflightResults: Array<{ job: ScrapedJob; score: number; result: Awaited<ReturnType<JobPlatform['preflightApplication']>> }> = [];
@@ -267,14 +271,10 @@ export async function main(runMode: RunMode = resolveRunMode()) {
         }
         slotReserved = true;
 
-        const content = await aiService.generateCustomizedContent(job.title, job.company, jdText, {
-          strengths: evaluation.strengths,
-          gaps: evaluation.gaps,
-          decision: evaluation.decision,
-        });
+        const coverLetter = evaluation.coverLetter || '';
         if (pipelineStopped || reachedRunLimit()) return;
 
-        enqueueApply(platform, job, location, evaluation.score, formattedReason, content.coverLetter);
+        enqueueApply(platform, job, location, evaluation.score, formattedReason, coverLetter);
         handedToApply = true;
       } catch (error) {
         console.error(`AI 處理失敗 (${job.jobId}):`, error);

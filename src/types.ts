@@ -46,6 +46,7 @@ export interface EvaluationResult {
   strengths?: string[];
   gaps?: string[];
   mustHaveMatches?: RequirementMatch[];
+  coverLetter?: string; // One-shot generated cover letter when decision is apply/maybe
 }
 
 // --- Customization Result ---
@@ -76,6 +77,7 @@ export const EvaluationOutputSchema = z.object({
   gaps: z.array(z.string()).max(5),
   mustHaveMatches: z.array(RequirementMatchSchema),
   reason: z.string().min(1),
+  coverLetter: z.string().default(''),
 });
 
 export const CustomizationOutputSchema = z.object({

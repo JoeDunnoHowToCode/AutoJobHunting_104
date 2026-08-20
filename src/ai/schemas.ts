@@ -35,8 +35,9 @@ export const EVALUATION_JSON_SCHEMA = {
       },
     },
     reason: { type: 'string' as const },
+    coverLetter: { type: 'string' as const },
   },
-  required: ['breakdown', 'confidence', 'strengths', 'gaps', 'mustHaveMatches', 'reason'] as const,
+  required: ['breakdown', 'confidence', 'strengths', 'gaps', 'mustHaveMatches', 'reason', 'coverLetter'] as const,
   additionalProperties: false,
 };
 

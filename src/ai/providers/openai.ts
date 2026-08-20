@@ -143,6 +143,7 @@ export class OpenAIProvider implements LLMProvider {
       strengths: data.strengths,
       gaps: data.gaps,
       mustHaveMatches: data.mustHaveMatches,
+      coverLetter: data.coverLetter || '',
     };
     }, `OpenAI API 評估 ("${jobTitle}")`);
   }

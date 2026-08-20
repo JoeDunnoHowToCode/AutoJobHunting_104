@@ -142,6 +142,7 @@ export class OllamaProvider implements LLMProvider {
       strengths: data.strengths,
       gaps: data.gaps,
       mustHaveMatches: data.mustHaveMatches,
+      coverLetter: data.coverLetter || '',
     };
     }, `Ollama API 評估 ("${jobTitle}")`);
   }
