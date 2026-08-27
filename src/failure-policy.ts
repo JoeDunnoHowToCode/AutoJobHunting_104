@@ -1,5 +1,3 @@
-import { ApplicationFormError } from './platforms/platform104';
-
 /**
  * Splits a job-level failure into "this job is settled" and "we simply did not
  * get to evaluate it this round".
@@ -38,25 +36,31 @@ function statusOf(candidate: { status?: unknown; code?: unknown }): number {
   return Number(candidate.status ?? candidate.code);
 }
 
+/** Platform form-error codes that mean the job itself is settled. */
+const SETTLED_FORM_CODES = new Set(['ALREADY_APPLIED', 'JOB_UNAVAILABLE']);
+
 export function classifyFailure(error: unknown): FailureKind {
-  // 104 told us something definitive about the job itself.
-  if (error instanceof ApplicationFormError) {
-    return error.code === 'FORM_UNAVAILABLE' ? 'transient' : 'permanent';
-  }
-
-  // A clicked submission with an unreadable outcome is never settled. Retrying
-  // is safe because openApplicationForm checks the applied-state button before
-  // it clicks anything.
-  if (error instanceof UnverifiedSubmissionError) return 'transient';
-
   if (!error || typeof error !== 'object') return 'transient';
 
   const candidate = error as {
+    name?: unknown;
     status?: unknown;
     code?: unknown;
     message?: unknown;
     cause?: { code?: unknown };
   };
+
+  // Recognised by shape, not by `instanceof`, so this stays a platform-agnostic
+  // policy module: a second platform can raise its own ApplicationFormError
+  // without this file importing it.
+  if (candidate.name === 'ApplicationFormError') {
+    return SETTLED_FORM_CODES.has(String(candidate.code)) ? 'permanent' : 'transient';
+  }
+
+  // A clicked submission with an unreadable outcome is never settled. Retrying
+  // is safe because openApplicationForm checks the applied-state button before
+  // it clicks anything.
+  if (candidate.name === 'UnverifiedSubmissionError') return 'transient';
 
   const status = statusOf(candidate);
   if (status === 408 || status === 409 || status === 425 || status === 429 || status >= 500) {
