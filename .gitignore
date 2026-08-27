@@ -30,3 +30,6 @@ test-*.js
 plans/
 online_resume_extracted.json
 
+
+# Transient failure log (see src/transient-log.ts)
+logs/
