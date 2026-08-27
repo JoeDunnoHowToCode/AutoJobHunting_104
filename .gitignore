@@ -36,3 +36,6 @@ logs/
 
 # Append-only record store (migrated from applyRecord.json)
 applyRecord.jsonl
+
+# Failure-site screenshots (see captureFailureArtifact)
+artifacts/

@@ -1,5 +1,7 @@
 import { Locator, Page } from 'playwright';
 import * as readline from 'readline';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   ApplicationPreflightOptions,
   ApplicationPreflightResult,
@@ -363,6 +365,24 @@ export class Platform104 extends JobPlatform {
         checkboxDetails,
       },
     };
+  }
+
+  /**
+   * Saves the form as it stood when a submission failed. 36 apply-stage failures
+   * were unreviewable because the page was closed in `finally` with no trace.
+   * Best-effort: a failed screenshot must never mask the original error.
+   */
+  private async captureFailureArtifact(page: Page, jobId: string, label: string): Promise<void> {
+    try {
+      const directory = path.resolve(__dirname, '..', '..', 'artifacts');
+      fs.mkdirSync(directory, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const file = path.join(directory, `${jobId}-${label}-${stamp}.png`);
+      await page.screenshot({ path: file, fullPage: true });
+      console.log(`[artifact] 已保存失敗現場：${file}`);
+    } catch (error) {
+      console.warn(`[artifact] 保存失敗現場時出錯，已略過: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private async closeApplicationForm(session: ApplicationFormSession | null): Promise<void> {
@@ -757,6 +777,7 @@ export class Platform104 extends JobPlatform {
           !inspection.result.textareaVisible || !inspection.result.textareaEnabled ||
           !inspection.result.submitButtonVisible || !inspection.result.submitButtonEnabled) {
         console.error('應徵表單缺少可用的自薦信欄位或最終送出按鈕。');
+        await this.captureFailureArtifact(session.targetPage, jobId, 'missing-controls');
         return false;
       }
 
@@ -769,6 +790,7 @@ export class Platform104 extends JobPlatform {
         const described = (inspection.result.checkboxDetails ?? [])
           .map(box => `${box.checked ? '☑' : '☐'}${box.required ? '*' : ''} ${box.label || box.name || '(無標籤)'}`)
           .join(' | ');
+        await this.captureFailureArtifact(session.targetPage, jobId, 'unchecked-boxes');
         throw new ApplicationFormError(
           'FORM_UNAVAILABLE',
           `表單有 ${inspection.result.uncheckedCheckboxCount} 個未勾選選項，為避免變更同意或偏好設定未自動送出。選項：${described || '(無法讀取)'}`,
@@ -798,6 +820,7 @@ export class Platform104 extends JobPlatform {
 
       const written = await inspection.textarea.inputValue().catch(() => '');
       if (written.trim() !== trimmed.trim()) {
+        await this.captureFailureArtifact(session.targetPage, jobId, 'truncated-letter');
         throw new ApplicationFormError(
           'FORM_UNAVAILABLE',
           `自薦信寫入不完整，未送出。預期 ${trimmed.length} 字元、實際 ${written.length} 字元。`,
@@ -818,6 +841,7 @@ export class Platform104 extends JobPlatform {
         // The success text never showed. That is not evidence of failure — 104
         // may just be slow. Ask the platform what it thinks the state is now.
         console.warn(`成功提示未出現，改讀應徵按鈕狀態確認 (${jobId})...`);
+        await this.captureFailureArtifact(session.targetPage, jobId, 'no-success-text');
         await this.closeApplicationForm(session);
         session = null;
 

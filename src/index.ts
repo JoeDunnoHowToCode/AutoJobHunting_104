@@ -22,6 +22,7 @@ import { appendTransientLog, TransientStage } from './transient-log';
 import { ProgressWatchdog } from './watchdog';
 import { decideRunGate } from './run-gate';
 import { buildRunSummary, RunSummaryStats } from './run-summary';
+import { logEvent } from './events';
 
 /**
  * Local-time ISO stamp without the timezone suffix, e.g. 2026-08-26T14:23:11.
@@ -143,6 +144,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
     stallMs: 15 * 60 * 1000,
     onStall: () => {
       console.error('[watchdog] 15 分鐘無進展，中止本輪。');
+      logEvent('watchdog_stall', { stallMinutes: 15 });
       void stopForStall();
     },
   });
@@ -168,6 +170,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
     transientCounts[kind] = (transientCounts[kind] ?? 0) + 1;
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(`[未完成評估] ${job.jobId} ${job.title}｜${stage}｜${kind}｜${reason}`);
+    logEvent('transient_failure', { jobId: job.jobId, stage, kind, reason });
     if (!isDryRun) {
       appendTransientLog({ jobId: job.jobId, title: job.title, stage, kind, reason });
     }
@@ -242,6 +245,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
     applyQueue.clear();
     pipeline.clearPending();
     console.error(`[熔斷] 連續 ${consecutive} 次 API 速率限制，停止本輪以免耗盡配額。`);
+    logEvent('circuit_trip', { reason: 'rate_limit', consecutive });
     if (!isDryRun && !stopNoticeSent) {
       stopNoticeSent = true;
       await sendTelegramMessage(
@@ -331,6 +335,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
         appliedCount++;
         watchdog.tick();
         console.log(`[應徵成功] 已投遞第 ${appliedCount} 個職缺：「${job.title}」 - ${job.company}`);
+        logEvent('apply_success', { jobId: job.jobId, score, company: job.company, nth: appliedCount });
         try {
           await saveToNotion(applied);
         } catch (error) {
@@ -369,6 +374,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
             ? `分數 (${evaluation.score}) 未達門檻 (${config.scoreThreshold})\n${formattedReason}`
             : `必備條件嚴重缺失 (${evaluation.decision || 'N/A'})\n${formattedReason}`;
           record(job, 'skipped', reason, location, evaluation.score);
+          logEvent('ai_reject', { jobId: job.jobId, score: evaluation.score, decision: evaluation.decision ?? 'n/a' });
           watchdog.tick();
           return;
         }
@@ -428,6 +434,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
   };
 
   watchdog.start();
+  logEvent('run_start', { mode: runMode, runLimit, threshold: config.scoreThreshold, keywords: searchKeywords.length });
 
   try {
     for (const platform of platforms) {
@@ -439,6 +446,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
         // An unattended VM has to be told, and the process has to exit non-zero.
         // This path used to log and fall through to a silent exit 0.
         console.error(gate.notice);
+        logEvent('run_gate_blocked', { platform: platform.platformName, reason: 'session_invalid' });
         process.exitCode = gate.exitCode;
         if (!isDryRun && gate.notice) await sendTelegramMessage(gate.notice);
         pipelineStopped = true;
@@ -535,6 +543,15 @@ export async function main(runMode: RunMode = resolveRunMode()) {
   }
   console.log(`未完成評估分類：${transientBreakdown}${transientTotal > 0 ? '（未寫入紀錄，下輪會重試）' : ''}`);
   if (watchdog.stalled) console.warn('本輪因進度停滯被 watchdog 中止。');
+  logEvent('run_end', {
+    mode: runMode,
+    applied: appliedJobs.length,
+    skipped: skippedJobs.length,
+    transient: transientTotal,
+    processed: processedCount,
+    elapsedMs: Date.now() - startedAt,
+    stalled: watchdog.stalled,
+  });
 
   // Sent unconditionally. On an unattended VM, "applied 0 jobs" is itself the
   // signal worth having — silence cannot be told apart from a dead session.
