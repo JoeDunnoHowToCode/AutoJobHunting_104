@@ -8,7 +8,10 @@ import {
 } from './base';
 import { config } from '../config';
 import { matchAppliedButtonState } from './applied-state';
+import { CheckboxDetail, collectCheckboxDetails } from './checkbox-details';
 import { UnverifiedSubmissionError } from '../failure-policy';
+import { countCjkChars, cutAtSentenceBoundary } from '../text-utils';
+import { lintCoverLetter } from '../cover-letter-lint';
 
 export type PlatformAccessErrorCode = 'SESSION_EXPIRED' | 'PLATFORM_LIMITED' | 'PAGE_UNRECOGNIZED';
 export type PlatformRequestStage = 'login' | 'search' | 'job' | 'application';
@@ -134,6 +137,9 @@ const LIMIT_TEXT_MARKERS: Array<{ id: string; text: string; classification: Plat
   { id: 'access_denied', text: 'Access Denied', classification: 'http_forbidden' },
   { id: 'service_unavailable', text: '服務暫時無法使用', classification: 'service_unavailable' },
 ];
+/** Used when 104's textarea exposes no maxlength of its own. */
+const COVER_LETTER_FALLBACK_MAX_CHARS = 220;
+
 const JOB_UNAVAILABLE_TEXT_MARKERS = ['此職缺已關閉', '職缺已關閉', '已停止徵才', '找不到此職缺'];
 const ALREADY_APPLIED_TEXT_MARKERS = ['您已應徵此職缺', '已應徵此職缺', '您已投遞此職缺'];
 
@@ -327,6 +333,13 @@ export class Platform104 extends JobPlatform {
       }
     }
 
+    // Diagnostic only: what the boxes actually say, so a "form unavailable"
+    // failure stops being an unreadable dead end. The submit decision below is
+    // unchanged — nothing here checks a box.
+    const checkboxDetails: CheckboxDetail[] = await page
+      .evaluate(collectCheckboxDetails)
+      .catch(() => []);
+
     const textareaFound = textarea !== null;
     const submitButtonFound = submitButton !== null;
     const textareaVisible = textareaFound && await textarea!.isVisible().catch(() => false);
@@ -347,6 +360,7 @@ export class Platform104 extends JobPlatform {
         submitButtonEnabled,
         visibleCheckboxCount,
         uncheckedCheckboxCount,
+        checkboxDetails,
       },
     };
   }
@@ -750,13 +764,45 @@ export class Platform104 extends JobPlatform {
       // marketing consent or change resume visibility, so never force-check
       // them. A live run stops for review instead.
       if (inspection.result.uncheckedCheckboxCount > 0) {
-        console.error(`表單有 ${inspection.result.uncheckedCheckboxCount} 個未勾選選項；為避免變更同意或偏好設定，未自動送出。`);
-        return false;
+        // Behaviour unchanged: still refuses to submit. The labels are logged so
+        // the failure stops being an unreadable dead end (決議 #14).
+        const described = (inspection.result.checkboxDetails ?? [])
+          .map(box => `${box.checked ? '☑' : '☐'}${box.required ? '*' : ''} ${box.label || box.name || '(無標籤)'}`)
+          .join(' | ');
+        throw new ApplicationFormError(
+          'FORM_UNAVAILABLE',
+          `表單有 ${inspection.result.uncheckedCheckboxCount} 個未勾選選項，為避免變更同意或偏好設定未自動送出。選項：${described || '(無法讀取)'}`,
+        );
+      }
+
+      // 104's textarea may carry a maxlength, and pressSequentially silently
+      // drops the overflow. Trim on a sentence boundary first, then verify what
+      // actually landed in the field before clicking submit.
+      const maxLengthAttribute = Number(inspection.result.textareaMaxLength);
+      const maxChars = Number.isFinite(maxLengthAttribute) && maxLengthAttribute > 0
+        ? maxLengthAttribute
+        : COVER_LETTER_FALLBACK_MAX_CHARS;
+      const trimmed = cutAtSentenceBoundary(coverLetter, maxChars);
+      if (trimmed.length !== coverLetter.length) {
+        console.log(`[自薦信裁切] 上限 ${maxChars} 字，原 ${countCjkChars(coverLetter)} → ${countCjkChars(trimmed)} 個中文字。`);
+      }
+
+      const lint = lintCoverLetter(trimmed, { maxCjkChars: maxChars });
+      if (!lint.clean) {
+        console.warn(`[自薦信品質] ${lint.cjkChars} 字｜flags=${lint.flags.join(',')}｜禁用詞=${lint.bannedPhrases.join('、') || '無'}`);
       }
 
       console.log('Writing cover letter with human typing simulation...');
-      await humanType(inspection.textarea, coverLetter);
+      await humanType(inspection.textarea, trimmed);
       await session.targetPage.waitForTimeout(1000);
+
+      const written = await inspection.textarea.inputValue().catch(() => '');
+      if (written.trim() !== trimmed.trim()) {
+        throw new ApplicationFormError(
+          'FORM_UNAVAILABLE',
+          `自薦信寫入不完整，未送出。預期 ${trimmed.length} 字元、實際 ${written.length} 字元。`,
+        );
+      }
 
       console.log('Submitting application...');
       await inspection.submitButton.click();
