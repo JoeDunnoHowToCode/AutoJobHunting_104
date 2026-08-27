@@ -58,6 +58,13 @@ export class JobDatabase {
   }
 
   private updateProcessedIndex(record: JobRecord, dateStr: string): void {
+    // A `failed` record must not enter the index at all. It carries neither
+    // hasApplied nor latestSkippedDate, so an indexed entry would make
+    // hasBeenProcessed() fall through to its unconditional `return true` and
+    // exclude the job forever, with no expiry. That cost 56 jobs — 31 of them
+    // to nothing worse than a Gemini 429.
+    if (record.status === 'failed') return;
+
     const entry = this.processedMap.get(record.jobId) || { hasApplied: false };
     if (record.status === 'applied') {
       entry.hasApplied = true;
