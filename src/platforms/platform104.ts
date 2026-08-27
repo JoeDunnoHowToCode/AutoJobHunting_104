@@ -765,12 +765,31 @@ export class Platform104 extends JobPlatform {
     }
   }
 
+  /**
+   * Records the shape of 104's submission requests so a future version can use
+   * the HTTP response as the primary success signal instead of page text
+   * (決議 #2). Passive: method, path and status only — never a body, never a
+   * query string, and it never blocks or alters the request.
+   */
+  private attachSubmissionRequestLogger(page: Page, jobId: string): void {
+    page.on('response', response => {
+      const request = response.request();
+      if (request.method() === 'GET') return;
+      console.log(
+        `[104 apply-xhr] jobId=${jobId} method=${request.method()} ` +
+        `path=${safePath(response.url())} status=${response.status()}`,
+      );
+    });
+  }
+
   public async applyToJob(jobId: string, coverLetter: string): Promise<boolean> {
     console.log(`Opening application page in authenticated context for jobId: ${jobId}...`);
     let session: ApplicationFormSession | null = null;
 
     try {
       session = await this.openApplicationForm(jobId);
+      this.attachSubmissionRequestLogger(session.targetPage, jobId);
+      if (session.popupOpened) this.attachSubmissionRequestLogger(session.sourcePage, jobId);
       const inspection = await this.inspectForm(session.targetPage);
 
       if (!inspection.textarea || !inspection.submitButton ||
