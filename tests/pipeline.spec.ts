@@ -2,13 +2,10 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import PQueue from 'p-queue';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { retryTransient } from '../src/ai/retry';
 import { JobDatabase, JobRecord } from '../src/db';
 import { PipelineState } from '../src/pipeline-state';
-
-function assert(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(message);
-}
 
 function record(jobId: string, status: JobRecord['status']): JobRecord {
   return {
@@ -20,39 +17,94 @@ function record(jobId: string, status: JobRecord['status']): JobRecord {
     score: 0,
     reason: 'test',
     status,
-    processedAt: '12:00:00',
+    processedAt: '2026-08-26T12:00:00',
   };
 }
 
-async function run(): Promise<void> {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autojob-pipeline-'));
-  const databasePath = path.join(directory, 'applyRecord.json');
+describe('JobDatabase 去重索引', () => {
+  let directory: string;
+  let databasePath: string;
 
-  try {
-    console.log('[1/5] DB 索引保留 applied 優先語意');
-    fs.writeFileSync(databasePath, JSON.stringify({
-      '2026-08-01': { applied: [record('applied-then-failed', 'applied')], skipped: [], failed: [] },
-      '2026-08-13': { applied: [], skipped: [], failed: [record('applied-then-failed', 'failed')] },
-    }), 'utf8');
+  beforeEach(() => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autojob-pipeline-'));
+    databasePath = path.join(directory, 'applyRecord.json');
+  });
+
+  afterEach(() => {
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('已成功投遞的職缺不得因後續 failed 紀錄而解鎖', () => {
+    fs.writeFileSync(
+      databasePath,
+      JSON.stringify({
+        '2026-08-01': { applied: [record('applied-then-failed', 'applied')], skipped: [], failed: [] },
+        '2026-08-13': { applied: [], skipped: [], failed: [record('applied-then-failed', 'failed')] },
+      }),
+      'utf8',
+    );
+    expect(new JobDatabase(databasePath).hasBeenProcessed('applied-then-failed')).toBe(true);
+  });
+
+  it('未記錄職缺應可處理', () => {
+    fs.writeFileSync(databasePath, JSON.stringify({}), 'utf8');
+    expect(new JobDatabase(databasePath).hasBeenProcessed('new-job')).toBe(false);
+  });
+
+  it('隔離測試只寫入暫存目錄', () => {
     const database = new JobDatabase(databasePath);
-    assert(database.hasBeenProcessed('applied-then-failed'), '已成功投遞的職缺不得因後續 failed 紀錄而解鎖');
-    assert(!database.hasBeenProcessed('new-job'), '未記錄職缺應可處理');
+    database.addRecord(record('isolated-test-job', 'skipped'));
+    expect(fs.existsSync(databasePath)).toBe(true);
+  });
+});
 
-    console.log('[2/5] PipelineState 去重、窗口與名額釋放');
+describe('PipelineState 去重、窗口與名額', () => {
+  let directory: string;
+  let database: JobDatabase;
+
+  beforeEach(() => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autojob-state-'));
+    database = new JobDatabase(path.join(directory, 'applyRecord.json'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('首次工作可進入，同一 jobId 不得重複進入', () => {
     const state = new PipelineState();
-    assert(state.tryStart('one', database), '首次工作應可進入');
-    assert(!state.tryStart('one', database), '同一 jobId 不得重複進入');
-    assert(!state.canAcceptMore(1), '達到 in-flight 上限時必須背壓');
-    assert(state.reserveApply('one', 0, 1), '應可保留唯一投遞名額');
-    state.releaseApply('one');
-    assert(state.reservedApplyCount === 0, '生成失敗後名額必須歸還');
-    state.finish('one');
-    assert(state.inFlightCount === 0, '完成後 in-flight 鎖必須釋放');
+    expect(state.tryStart('one', database)).toBe(true);
+    expect(state.tryStart('one', database)).toBe(false);
+  });
 
-    console.log('[3/5] Apply queue 嚴格單線');
+  it('達到 in-flight 上限時必須背壓', () => {
+    const state = new PipelineState();
+    state.tryStart('one', database);
+    expect(state.canAcceptMore(1)).toBe(false);
+  });
+
+  it('生成失敗後投遞名額必須歸還', () => {
+    const state = new PipelineState();
+    state.tryStart('one', database);
+    expect(state.reserveApply('one', 0, 1)).toBe(true);
+    state.releaseApply('one');
+    expect(state.reservedApplyCount).toBe(0);
+  });
+
+  it('完成後 in-flight 鎖必須釋放', () => {
+    const state = new PipelineState();
+    state.tryStart('one', database);
+    state.finish('one');
+    expect(state.inFlightCount).toBe(0);
+  });
+});
+
+describe('Apply queue 併發保證', () => {
+  it('嚴格單線，不可併發', async () => {
     const applyQueue = new PQueue({ concurrency: 1 });
     let active = 0;
     let maximum = 0;
+
     for (let index = 0; index < 5; index++) {
       void applyQueue.add(async () => {
         active++;
@@ -62,34 +114,46 @@ async function run(): Promise<void> {
       });
     }
     await applyQueue.onIdle();
-    assert(maximum === 1, `Apply queue 不可併發，實際最大值為 ${maximum}`);
 
-    console.log('[4/5] 只重試暫時性 LLM 錯誤');
-    let permanentAttempts = 0;
-    await retryTransient(async () => {
-      permanentAttempts++;
-      throw new Error('Schema validation failed');
-    }, 'permanent-error-test').catch(() => undefined);
-    assert(permanentAttempts === 1, 'Schema 驗證錯誤不得重試');
+    expect(maximum).toBe(1);
+  });
+});
 
-    let transientAttempts = 0;
-    await retryTransient(async () => {
-      transientAttempts++;
-      if (transientAttempts === 1) throw { status: 429, message: 'rate limit' };
-      return undefined;
-    }, 'transient-error-test', 2);
-    assert(transientAttempts === 2, '429 應重試一次');
+describe('retryTransient 重試邊界', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
-    console.log('[5/5] 隔離測試不寫入專案 applyRecord.json');
-    database.addRecord(record('isolated-test-job', 'skipped'));
-    assert(fs.existsSync(databasePath), '測試 DB 應寫入暫存目錄');
-    console.log('PASS: Pipeline 核心離線測試完成');
-  } finally {
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
-}
+  it('Schema 驗證錯誤不得重試', async () => {
+    let attempts = 0;
+    await expect(
+      retryTransient(async () => {
+        attempts++;
+        throw new Error('Schema validation failed');
+      }, 'permanent-error-test'),
+    ).rejects.toThrow();
+    expect(attempts).toBe(1);
+  });
 
-run().catch(error => {
-  console.error(error);
-  process.exitCode = 1;
+  // Fake timers keep this at milliseconds instead of waiting out the real
+  // 12s rate-limit backoff.
+  it('429 應重試一次', async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+
+    const pending = retryTransient(
+      async () => {
+        attempts++;
+        if (attempts === 1) throw { status: 429, message: 'rate limit' };
+        return undefined;
+      },
+      'transient-error-test',
+      2,
+    );
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await pending;
+
+    expect(attempts).toBe(2);
+  });
 });

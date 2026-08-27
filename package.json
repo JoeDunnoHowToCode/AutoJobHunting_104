@@ -14,18 +14,15 @@
     "preflight-104:review": "AUTOJOB_HEADLESS=false ts-node src/preflight-104.ts --job-id",
     "inspect-apply": "AUTOJOB_HEADLESS=false ts-node src/inspect-application.ts",
     "login": "ts-node src/login.ts",
-    "test": "npm run test:all",
-    "test:all": "npm run test-prompts && npm run test-pipeline && npm run test-application-action && npm run test-preflight-104 && npm run test-session-state && npm run test-104-platform",
+    "test": "vitest run",
     "test:browser": "ts-node tests/test-stealth.spec.ts",
     "test:ai": "npm run test-ai && npm run test-cover-letter",
     "test-ai": "ts-node tests/ai-smoke.ts",
     "test-cover-letter": "ts-node tests/cover-letter-test.ts",
-    "test-prompts": "ts-node tests/prompts.spec.ts",
-    "test-pipeline": "ts-node tests/pipeline.spec.ts",
-    "test-application-action": "ts-node tests/application-action.spec.ts",
-    "test-preflight-104": "ts-node tests/preflight-104.spec.ts",
-    "test-session-state": "ts-node tests/session-state.spec.ts",
-    "test-104-platform": "ts-node tests/platform104.spec.ts"
+    "test:watch": "vitest",
+    "probe:multi-llm": "ts-node scripts/test-multi-llm.ts",
+    "probe:clear-filters": "AUTOJOB_HEADLESS=false ts-node scripts/test-clear-filters.ts",
+    "probe:apply-button": "AUTOJOB_HEADLESS=false ts-node scripts/test-apply-button.ts"
   },
   "dependencies": {
     "@google/genai": "latest",
@@ -39,6 +36,7 @@
   "devDependencies": {
     "@types/node": "^20.12.12",
     "ts-node": "^10.9.2",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "vitest": "^4.1.11"
   }
 }
