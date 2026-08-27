@@ -7,6 +7,8 @@ import {
   ScrapedJob,
 } from './base';
 import { config } from '../config';
+import { matchAppliedButtonState } from './applied-state';
+import { UnverifiedSubmissionError } from '../failure-policy';
 
 export type PlatformAccessErrorCode = 'SESSION_EXPIRED' | 'PLATFORM_LIMITED' | 'PAGE_UNRECOGNIZED';
 export type PlatformRequestStage = 'login' | 'search' | 'job' | 'application';
@@ -398,6 +400,19 @@ export class Platform104 extends JobPlatform {
         throw new ApplicationFormError('FORM_UNAVAILABLE', '找不到「我要應徵」按鈕；可能是職缺狀態或頁面結構已變更。');
       }
 
+      // The CSS selectors match the button element regardless of its label, so
+      // an already-applied job would otherwise get clicked and land on 104's
+      // "apply again?" dialog — which has no textarea, and used to be recorded
+      // as a generic form failure. Read the label before touching it.
+      const applyButtonText = (await applyButton.innerText().catch(() => '')).trim();
+      console.log(`[104 apply-button] jobId=${jobId} text=${JSON.stringify(applyButtonText)}`);
+      if (matchAppliedButtonState(applyButtonText)) {
+        throw new ApplicationFormError(
+          'ALREADY_APPLIED',
+          `104 應徵按鈕顯示已投遞狀態：${JSON.stringify(applyButtonText)}`,
+        );
+      }
+
       const popupPromise = sourcePage.waitForEvent('popup', { timeout: 3000 }).catch(() => null);
       await applyButton.click();
       const popup = await popupPromise;
@@ -425,6 +440,30 @@ export class Platform104 extends JobPlatform {
     } catch (error) {
       await this.closeApplicationForm({ sourcePage, targetPage, popupOpened });
       throw error;
+    }
+  }
+
+  /**
+   * Reopens the public job page in the authenticated context and reports what
+   * the apply button now says. Used to settle a submission whose success text
+   * never appeared, instead of guessing from a timeout.
+   */
+  private async readAppliedStateFromJobPage(jobId: string): Promise<string | null> {
+    let page: Page | null = null;
+    try {
+      page = await this.getApplyPage();
+      await page.goto(`https://www.104.com.tw/job/${jobId}`, { waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(2000);
+      const button = await this.findFirstVisible(this.applyButtonCandidates(page));
+      if (!button) return null;
+      const text = (await button.innerText().catch(() => '')).trim();
+      console.log(`[104 apply-button recheck] jobId=${jobId} text=${JSON.stringify(text)}`);
+      return text;
+    } catch (error) {
+      console.error(`重新確認應徵狀態失敗 (${jobId}):`, error);
+      return null;
+    } finally {
+      if (page) await this.closePage(page);
     }
   }
 
@@ -730,10 +769,35 @@ export class Platform104 extends JobPlatform {
         await session.targetPage.getByText(successRegex).first().waitFor({ state: 'visible', timeout: 15000 });
         return true;
       } catch {
-        return false;
+        // The success text never showed. That is not evidence of failure — 104
+        // may just be slow. Ask the platform what it thinks the state is now.
+        console.warn(`成功提示未出現，改讀應徵按鈕狀態確認 (${jobId})...`);
+        await this.closeApplicationForm(session);
+        session = null;
+
+        const buttonText = await this.readAppliedStateFromJobPage(jobId);
+        if (matchAppliedButtonState(buttonText)) {
+          console.log(`[應徵確認] 由按鈕狀態確認已送出：${JSON.stringify(buttonText)}`);
+          return true;
+        }
+        throw new UnverifiedSubmissionError(
+          buttonText === null
+            ? '送出後讀不到應徵按鈕，無法確認結果。'
+            : `送出後按鈕仍顯示 ${JSON.stringify(buttonText)}，無法確認結果。`,
+          buttonText ?? undefined,
+        );
       }
     } catch (err: any) {
-      if (err instanceof PlatformAccessError) throw err;
+      // Typed failures carry the information the caller needs to decide whether
+      // the job is settled or merely unevaluated. Only genuinely unknown errors
+      // collapse into a plain `false`.
+      if (
+        err instanceof PlatformAccessError ||
+        err instanceof ApplicationFormError ||
+        err instanceof UnverifiedSubmissionError
+      ) {
+        throw err;
+      }
       console.error('Error during job application:', err);
       return false;
     } finally {
