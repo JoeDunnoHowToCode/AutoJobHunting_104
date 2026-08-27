@@ -17,6 +17,7 @@ import {
 } from './application-action';
 import { classifyFailure, UnverifiedSubmissionError } from './failure-policy';
 import { applyPriorityForScore } from './apply-priority';
+import { RateLimitCircuit } from './rate-limit-circuit';
 import { appendTransientLog, TransientStage } from './transient-log';
 import { ProgressWatchdog } from './watchdog';
 import { decideRunGate } from './run-gate';
@@ -137,6 +138,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
 
   const startedAt = Date.now();
   const transientCounts: Record<string, number> = {};
+  const rateLimitCircuit = new RateLimitCircuit();
   const watchdog = new ProgressWatchdog({
     stallMs: 15 * 60 * 1000,
     onStall: () => {
@@ -225,6 +227,27 @@ export async function main(runMode: RunMode = resolveRunMode()) {
     if (!isDryRun && !stopNoticeSent) {
       stopNoticeSent = true;
       await sendTelegramMessage('⏱ <b>[自動投遞系統停滯中止]</b>\n15 分鐘無任何進展，已清空佇列並結束本輪。');
+    }
+  };
+
+  /**
+   * Quota exhaustion is not something backoff can fix. Stop the run rather than
+   * burning ~36s of retries per remaining job.
+   */
+  const stopForRateLimit = async (consecutive: number): Promise<void> => {
+    if (pipelineStopped) return;
+    pipelineStopped = true;
+    jdQueue.clear();
+    llmQueue.clear();
+    applyQueue.clear();
+    pipeline.clearPending();
+    console.error(`[熔斷] 連續 ${consecutive} 次 API 速率限制，停止本輪以免耗盡配額。`);
+    if (!isDryRun && !stopNoticeSent) {
+      stopNoticeSent = true;
+      await sendTelegramMessage(
+        `🧯 <b>[自動投遞系統熔斷]</b>\n連續 ${consecutive} 次 API 速率限制（429），已停止本輪。\n` +
+        `未評估的職缺沒有寫入紀錄，下輪會重新處理。`,
+      );
     }
   };
 
@@ -337,6 +360,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
         if (pipelineStopped || reachedRunLimit()) return;
         const aiService = LLMFactory.getProvider();
         const evaluation = await aiService.evaluateJob(job.title, job.company, jdText);
+        rateLimitCircuit.recordSuccess();
         const formattedReason = evaluation.reason.replace(/(\d+\.\s)/g, '\n$1').trim();
         console.log(`[AI] ${job.title}: ${evaluation.score} 分 (${evaluation.decision || 'N/A'})`);
 
@@ -365,6 +389,10 @@ export async function main(runMode: RunMode = resolveRunMode()) {
       } catch (error) {
         // 31 jobs were lost forever to plain 429s under the old `failed` row.
         handleFailure(job, 'llm', error, location);
+        rateLimitCircuit.recordFailure(error);
+        if (rateLimitCircuit.shouldStop) {
+          await stopForRateLimit(rateLimitCircuit.consecutiveCount);
+        }
       } finally {
         if (slotReserved && !handedToApply) pipeline.releaseApply(job.jobId);
         if (!handedToApply) pipeline.finish(job.jobId);
