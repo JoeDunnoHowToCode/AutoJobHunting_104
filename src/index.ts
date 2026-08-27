@@ -16,6 +16,7 @@ import {
   RunMode,
 } from './application-action';
 import { classifyFailure, UnverifiedSubmissionError } from './failure-policy';
+import { applyPriorityForScore } from './apply-priority';
 import { appendTransientLog, TransientStage } from './transient-log';
 import { ProgressWatchdog } from './watchdog';
 import { decideRunGate } from './run-gate';
@@ -273,6 +274,8 @@ export async function main(runMode: RunMode = resolveRunMode()) {
 
   const enqueueApply = (platform: JobPlatform, job: ScrapedJob, location: string, score: number, reason: string, coverLetter: string): void => {
     void applyQueue.add(async () => {
+      // Higher-scoring jobs jump the queue, so hitting the apply limit drops the
+      // weakest candidates rather than the slowest-to-evaluate ones.
       try {
         if (pipelineStopped) return;
         if (reachedRunLimit()) {
@@ -322,7 +325,8 @@ export async function main(runMode: RunMode = resolveRunMode()) {
       } finally {
         pipeline.finish(job.jobId);
       }
-    }).catch(error => console.error(`Apply queue task 未處理錯誤 (${job.jobId}):`, error));
+    }, { priority: applyPriorityForScore(score) })
+      .catch(error => console.error(`Apply queue task 未處理錯誤 (${job.jobId}):`, error));
   };
 
   const enqueueLlm = (platform: JobPlatform, job: ScrapedJob, jdText: string, location: string): void => {

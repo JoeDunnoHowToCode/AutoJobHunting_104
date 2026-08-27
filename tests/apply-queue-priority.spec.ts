@@ -62,8 +62,15 @@ describe('applyQueue 以分數決定投遞順序', () => {
 describe('index.ts 實際接線', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'index.ts'), 'utf8');
 
+  // 距離型的正則（add( ... priority 之間 N 字元內）在這裡不可行：
+  // enqueueApply 的 task 主體有上百行，選項物件在最後面。改為比對具體字串。
   it('applyQueue.add 必須帶入以分數計算的 priority', () => {
-    expect(source).toMatch(/applyQueue\.add\([\s\S]{0,400}?priority:\s*applyPriorityForScore\(/);
+    expect(source).toContain('{ priority: applyPriorityForScore(score) }');
+  });
+
+  it('priority 只用在 applyQueue，不得誤加到 jd/llm 佇列', () => {
+    expect(source).not.toMatch(/jdQueue\.add\([\s\S]*?priority:/);
+    expect(source).not.toMatch(/llmQueue\.add\([\s\S]*?priority:/);
   });
 
   it('applyQueue 併發數必須維持 1', () => {
