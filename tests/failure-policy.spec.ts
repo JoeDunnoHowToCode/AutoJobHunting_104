@@ -61,6 +61,27 @@ describe('classifyFailure — permanent（寫 DB）', () => {
   });
 });
 
+// classifyFailure is platform-agnostic policy. It must recognise a platform's
+// form error by shape, so a second platform (CakeResume / Yourator) does not
+// require this module to import it — and so no import cycle is needed.
+describe('classifyFailure — 以形狀辨識平台錯誤，不依賴具體平台模組', () => {
+  it.each([
+    ['ALREADY_APPLIED', 'permanent'],
+    ['JOB_UNAVAILABLE', 'permanent'],
+    ['FORM_UNAVAILABLE', 'transient'],
+  ])('形似 ApplicationFormError 且 code=%s → %s', (code, expected) => {
+    expect(classifyFailure({ name: 'ApplicationFormError', code, message: 'x' })).toBe(expected);
+  });
+
+  it('形似 UnverifiedSubmissionError → transient', () => {
+    expect(classifyFailure({ name: 'UnverifiedSubmissionError', message: 'x' })).toBe('transient');
+  });
+
+  it('name 相符但 code 未知時保守歸為 transient', () => {
+    expect(classifyFailure({ name: 'ApplicationFormError', code: 'SOMETHING_NEW' })).toBe('transient');
+  });
+});
+
 describe('UnverifiedSubmissionError', () => {
   it('攜帶讀到的按鈕原文供事後追查', () => {
     const error = new UnverifiedSubmissionError('讀不到按鈕', '我要應徵');
