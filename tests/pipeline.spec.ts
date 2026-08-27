@@ -24,10 +24,12 @@ function record(jobId: string, status: JobRecord['status']): JobRecord {
 describe('JobDatabase 去重索引', () => {
   let directory: string;
   let databasePath: string;
+  let legacyPath: string;
 
   beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autojob-pipeline-'));
-    databasePath = path.join(directory, 'applyRecord.json');
+    legacyPath = path.join(directory, 'applyRecord.json');
+    databasePath = path.join(directory, 'applyRecord.jsonl');
   });
 
   afterEach(() => {
@@ -36,7 +38,7 @@ describe('JobDatabase 去重索引', () => {
 
   it('已成功投遞的職缺不得因後續 failed 紀錄而解鎖', () => {
     fs.writeFileSync(
-      databasePath,
+      legacyPath,
       JSON.stringify({
         '2026-08-01': { applied: [record('applied-then-failed', 'applied')], skipped: [], failed: [] },
         '2026-08-13': { applied: [], skipped: [], failed: [record('applied-then-failed', 'failed')] },
@@ -47,7 +49,7 @@ describe('JobDatabase 去重索引', () => {
   });
 
   it('未記錄職缺應可處理', () => {
-    fs.writeFileSync(databasePath, JSON.stringify({}), 'utf8');
+    fs.writeFileSync(legacyPath, JSON.stringify({}), 'utf8');
     expect(new JobDatabase(databasePath).hasBeenProcessed('new-job')).toBe(false);
   });
 
@@ -64,7 +66,7 @@ describe('PipelineState 去重、窗口與名額', () => {
 
   beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autojob-state-'));
-    database = new JobDatabase(path.join(directory, 'applyRecord.json'));
+    database = new JobDatabase(path.join(directory, 'applyRecord.jsonl'));
   });
 
   afterEach(() => {

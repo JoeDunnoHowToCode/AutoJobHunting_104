@@ -33,3 +33,6 @@ online_resume_extracted.json
 
 # Transient failure log (see src/transient-log.ts)
 logs/
+
+# Append-only record store (migrated from applyRecord.json)
+applyRecord.jsonl

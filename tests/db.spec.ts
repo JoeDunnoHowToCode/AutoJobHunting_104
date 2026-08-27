@@ -32,10 +32,14 @@ function emptyDay() {
 describe('JobDatabase.hasBeenProcessed', () => {
   let directory: string;
   let databasePath: string;
+  let legacyPath: string;
 
   beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autojob-db-'));
-    databasePath = path.join(directory, 'applyRecord.json');
+    // 種入舊格式 applyRecord.json、開啟 applyRecord.jsonl：同時驗證
+    // 去重語意與「遷移不得改變語意」這兩件事。
+    legacyPath = path.join(directory, 'applyRecord.json');
+    databasePath = path.join(directory, 'applyRecord.jsonl');
   });
 
   afterEach(() => {
@@ -43,7 +47,7 @@ describe('JobDatabase.hasBeenProcessed', () => {
   });
 
   function seed(data: Record<string, ReturnType<typeof emptyDay>>): JobDatabase {
-    fs.writeFileSync(databasePath, JSON.stringify(data), 'utf8');
+    fs.writeFileSync(legacyPath, JSON.stringify(data), 'utf8');
     return new JobDatabase(databasePath);
   }
 
@@ -111,7 +115,7 @@ describe('JobDatabase 唯讀模式', () => {
 
   beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autojob-db-ro-'));
-    databasePath = path.join(directory, 'applyRecord.json');
+    databasePath = path.join(directory, 'applyRecord.jsonl');
   });
 
   afterEach(() => {

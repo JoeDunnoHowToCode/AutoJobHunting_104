@@ -87,7 +87,7 @@ export const config: Config = {
   resumePath: path.resolve(rootDir, 'resume.json'),
   authStatePath: path.resolve(rootDir, 'auth_state.json'),
   userDataDir: path.resolve(rootDir, '.chrome-profile'),
-  dbPath: path.resolve(rootDir, 'applyRecord.json'),
+  dbPath: path.resolve(rootDir, 'applyRecord.jsonl'),
   applyLimitPerRun: settings.applyLimitPerRun ?? 10,
   // Intended for one-off, visible manual validation without modifying a
   // user's ignored settings.json. This does not attempt to alter browser
