@@ -21,10 +21,15 @@ import { ProgressWatchdog } from './watchdog';
 import { decideRunGate } from './run-gate';
 import { buildRunSummary, RunSummaryStats } from './run-summary';
 
+/**
+ * Local-time ISO stamp without the timezone suffix, e.g. 2026-08-26T14:23:11.
+ * The date half used to be dropped, which left `processedAt` unusable for the
+ * legacy-format migration in db.ts (it splits on 'T' to recover a date key).
+ */
 function getLocalTime(): string {
   const now = new Date();
   const tzOffset = now.getTimezoneOffset() * 60000;
-  return new Date(now.getTime() - tzOffset).toISOString().split('T')[1].split('.')[0];
+  return new Date(now.getTime() - tzOffset).toISOString().split('.')[0];
 }
 
 function sleep(milliseconds: number): Promise<void> {
