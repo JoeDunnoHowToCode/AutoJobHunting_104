@@ -18,6 +18,7 @@ export const BANNED_PHRASES: string[] = [
   '竭誠',
   '深耕',
   '致力於',
+  '全面',
   '不遺餘力',
   '高度契合',
   '在當今',

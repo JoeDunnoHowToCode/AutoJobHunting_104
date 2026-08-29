@@ -8,6 +8,9 @@
  */
 export function applyPriorityForScore(score: number): number {
   // p-queue runs higher priority first. Scores are 0-100 already, so they map
-  // directly; clamping keeps a malformed score from jumping the queue.
+  // directly. A malformed score from the model must never reach the queue as
+  // NaN — comparisons against NaN are all false, so the ordering silently
+  // becomes undefined rather than merely wrong.
+  if (!Number.isFinite(score)) return 0;
   return Math.max(0, Math.min(100, Math.round(score)));
 }

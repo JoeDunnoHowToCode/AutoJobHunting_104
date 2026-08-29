@@ -16,6 +16,17 @@ describe('applyPriorityForScore', () => {
   it('分數為 0 時仍回合法的非負優先權', () => {
     expect(applyPriorityForScore(0)).toBeGreaterThanOrEqual(0);
   });
+
+  // LLM 回傳異常分數時，NaN 會讓 p-queue 的排序行為未定義。
+  it.each([NaN, Infinity, -Infinity, undefined, null])(
+    '異常分數 %s 一律回合法有限數',
+    value => {
+      const priority = applyPriorityForScore(value as unknown as number);
+      expect(Number.isFinite(priority)).toBe(true);
+      expect(priority).toBeGreaterThanOrEqual(0);
+      expect(priority).toBeLessThanOrEqual(100);
+    },
+  );
 });
 
 describe('applyQueue 以分數決定投遞順序', () => {

@@ -30,7 +30,10 @@ describe('lintCoverLetter — 禁用詞', () => {
 
   it('禁用詞表與 prompt 的負面詞彙表一致，至少涵蓋這幾個', () => {
     expect(BANNED_PHRASES).toEqual(
-      expect.arrayContaining(['扎實', '顯著提升', '賦能', '深耕', '致力於', '高度契合']),
+      expect.arrayContaining([
+        '扎實', '顯著提升', '賦能', '快節奏', '竭誠', '深耕',
+        '致力於', '全面', '不遺餘力', '在當今', '高度契合',
+      ]),
     );
   });
 });
