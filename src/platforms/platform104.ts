@@ -12,7 +12,7 @@ import { config } from '../config';
 import { matchAppliedButtonState } from './applied-state';
 import { CheckboxDetail, collectCheckboxDetails } from './checkbox-details';
 import { UnverifiedSubmissionError } from '../failure-policy';
-import { countCjkChars, cutAtSentenceBoundary } from '../text-utils';
+import { countCjkChars, fitCoverLetter } from '../text-utils';
 import { lintCoverLetter } from '../cover-letter-lint';
 
 export type PlatformAccessErrorCode = 'SESSION_EXPIRED' | 'PLATFORM_LIMITED' | 'PAGE_UNRECOGNIZED';
@@ -819,16 +819,25 @@ export class Platform104 extends JobPlatform {
       // 104's textarea may carry a maxlength, and pressSequentially silently
       // drops the overflow. Trim on a sentence boundary first, then verify what
       // actually landed in the field before clicking submit.
+      // maxlength is a UTF-16 code-unit budget; the prompt's limit is an
+      // ideograph budget. They are different units and both must hold.
       const maxLengthAttribute = Number(inspection.result.textareaMaxLength);
-      const maxChars = Number.isFinite(maxLengthAttribute) && maxLengthAttribute > 0
+      const maxUnits = Number.isFinite(maxLengthAttribute) && maxLengthAttribute > 0
         ? maxLengthAttribute
-        : COVER_LETTER_FALLBACK_MAX_CHARS;
-      const trimmed = cutAtSentenceBoundary(coverLetter, maxChars);
+        : undefined;
+      const trimmed = fitCoverLetter(coverLetter, {
+        maxUnits,
+        maxCjkChars: COVER_LETTER_FALLBACK_MAX_CHARS,
+      });
       if (trimmed.length !== coverLetter.length) {
-        console.log(`[自薦信裁切] 上限 ${maxChars} 字，原 ${countCjkChars(coverLetter)} → ${countCjkChars(trimmed)} 個中文字。`);
+        console.log(
+          `[自薦信裁切] maxlength=${maxUnits ?? '未提供'} 單位／${COVER_LETTER_FALLBACK_MAX_CHARS} 中文字上限；` +
+          `原 ${coverLetter.length} 單位 ${countCjkChars(coverLetter)} 字 → ` +
+          `裁後 ${trimmed.length} 單位 ${countCjkChars(trimmed)} 字。`,
+        );
       }
 
-      const lint = lintCoverLetter(trimmed, { maxCjkChars: maxChars });
+      const lint = lintCoverLetter(trimmed, { maxCjkChars: COVER_LETTER_FALLBACK_MAX_CHARS });
       if (!lint.clean) {
         console.warn(`[自薦信品質] ${lint.cjkChars} 字｜flags=${lint.flags.join(',')}｜禁用詞=${lint.bannedPhrases.join('、') || '無'}`);
       }
