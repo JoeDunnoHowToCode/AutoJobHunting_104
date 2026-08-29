@@ -38,6 +38,7 @@ export interface JobDatabaseOptions {
  * applications. Reads tolerate a truncated final line for the same reason.
  */
 export class JobDatabase {
+  public corruptLineCount = 0;
   private processedMap = new Map<string, { hasApplied: boolean; latestSkippedDate?: string }>();
   private currentApplyId = 0;
   private todayRecords: JobRecord[] = [];
