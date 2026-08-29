@@ -35,7 +35,13 @@ export interface JobDatabaseOptions {
  * Every write is a single `appendFileSync` of one line. The previous design
  * re-serialised the whole file on every record, which meant a crash mid-run
  * lost the entire run's history — and losing history is what causes duplicate
- * applications. Reads tolerate a truncated final line for the same reason.
+ * applications.
+ *
+ * Loading never throws. An unreadable store means no de-duplication at all,
+ * which is precisely the state that produces duplicate applications — strictly
+ * worse than reading what survived and reporting the damage. Corrupt lines are
+ * counted and surfaced; a torn trailing line is repaired in place so the next
+ * append cannot weld it into the middle of the file.
  */
 export class JobDatabase {
   public corruptLineCount = 0;
@@ -45,9 +51,12 @@ export class JobDatabase {
   private readonly storePath: string;
   private readonly legacyPath: string;
   private readonly readOnly: boolean;
+  /** Where appends go. Differs from storePath only when storePath holds legacy JSON. */
+  private writePath: string;
 
   constructor(storePath: string = config.dbPath, options: JobDatabaseOptions = {}) {
     this.storePath = storePath;
+    this.writePath = storePath;
     this.legacyPath = storePath.replace(/\.jsonl$/, '.json');
     this.readOnly = options.readOnly ?? false;
     this.load();
@@ -82,8 +91,8 @@ export class JobDatabase {
   }
 
   /** Flattens the legacy date-bucketed object into ordered StoredRecords. */
-  private readLegacyRecords(): StoredRecord[] {
-    const parsed = JSON.parse(fs.readFileSync(this.legacyPath, 'utf8'));
+  private readLegacyRecords(sourcePath: string = this.legacyPath): StoredRecord[] {
+    const parsed = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
     const flattened: StoredRecord[] = [];
 
     for (const date of Object.keys(parsed).sort()) {
@@ -98,10 +107,41 @@ export class JobDatabase {
     return flattened;
   }
 
+  /** JSONL if the first non-empty line is an object carrying a jobId. */
+  private looksLikeJsonl(raw: string): boolean {
+    const firstLine = raw.split('\n').find(line => line.trim().length > 0);
+    if (!firstLine) return true;
+    try {
+      const parsed = JSON.parse(firstLine);
+      return Boolean(parsed) && typeof parsed === 'object' && 'jobId' in parsed;
+    } catch {
+      return false;
+    }
+  }
+
   private load(): void {
     try {
       if (fs.existsSync(this.storePath)) {
-        this.loadFromJsonl();
+        const raw = fs.readFileSync(this.storePath, 'utf8');
+        if (this.looksLikeJsonl(raw)) {
+          this.loadFromJsonl(raw);
+          return;
+        }
+
+        // The caller handed us the legacy date-bucketed file. Index it so
+        // de-duplication still works, but never append JSONL into it.
+        this.writePath = this.storePath.endsWith('.json')
+          ? `${this.storePath}l`
+          : `${this.storePath}.jsonl`;
+        console.warn(
+          `[DB] ${path.basename(this.storePath)} 是舊格式，僅供讀取；新紀錄將寫入 ${path.basename(this.writePath)}。`,
+        );
+        for (const record of this.readLegacyRecords(this.storePath)) {
+          this.index(record, record.date);
+        }
+        if (fs.existsSync(this.writePath)) {
+          this.loadFromJsonl(fs.readFileSync(this.writePath, 'utf8'), this.writePath);
+        }
         return;
       }
 
@@ -126,29 +166,49 @@ export class JobDatabase {
     }
   }
 
-  private loadFromJsonl(): void {
-    const lines = fs.readFileSync(this.storePath, 'utf8').split('\n');
+  private loadFromJsonl(raw: string, sourcePath: string = this.storePath): void {
+    const lines = raw.split('\n');
     const today = this.getTodayDateString();
+    let lastGoodEnd = 0;
+    let offset = 0;
 
     for (let position = 0; position < lines.length; position++) {
-      const line = lines[position].trim();
-      if (!line) continue;
+      const rawLine = lines[position];
+      const lineStart = offset;
+      offset += rawLine.length + 1;
+
+      const line = rawLine.trim();
+      if (!line) {
+        if (position < lines.length - 1) lastGoodEnd = offset;
+        continue;
+      }
 
       let stored: StoredRecord;
       try {
         stored = JSON.parse(line);
-      } catch (error) {
-        // Only the final line can legitimately be half-written (SIGKILL during
-        // append). A corrupt line anywhere else means real damage.
-        if (position === lines.length - 1) {
-          console.warn('[DB] 最後一行不完整，已略過（可能是上次執行被強制中斷）。');
-          continue;
-        }
-        throw error;
+      } catch {
+        this.corruptLineCount++;
+        console.error(`[DB] 第 ${position + 1} 行無法解析，已略過該筆紀錄。`);
+        continue;
       }
 
+      lastGoodEnd = lineStart + rawLine.length + 1;
       this.index(stored, stored.date);
       if (stored.date === today) this.todayRecords.push(stored);
+    }
+
+    if (this.corruptLineCount > 0) {
+      console.error(
+        `[DB] 共略過 ${this.corruptLineCount} 行損壞紀錄；去重可能不完整，請檢查 ${path.basename(sourcePath)}。`,
+      );
+    }
+
+    // Repair a torn trailing write now, while it is still the last line. Left
+    // in place, the next append turns it into an unreadable middle line.
+    const tornTail = Buffer.byteLength(raw, 'utf8') > Buffer.byteLength(raw.slice(0, lastGoodEnd), 'utf8');
+    if (tornTail && !this.readOnly) {
+      fs.writeFileSync(sourcePath, raw.slice(0, lastGoodEnd), 'utf8');
+      console.warn('[DB] 已修復上次中斷留下的殘缺尾行。');
     }
   }
 
@@ -179,8 +239,8 @@ export class JobDatabase {
     const today = this.getTodayDateString();
     const stored: StoredRecord = { ...record, date: today };
 
-    fs.mkdirSync(path.dirname(this.storePath), { recursive: true });
-    fs.appendFileSync(this.storePath, `${JSON.stringify(stored)}\n`, 'utf8');
+    fs.mkdirSync(path.dirname(this.writePath), { recursive: true });
+    fs.appendFileSync(this.writePath, `${JSON.stringify(stored)}\n`, 'utf8');
 
     this.index(record, today);
     this.todayRecords.push(record);
