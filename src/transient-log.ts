@@ -31,3 +31,20 @@ export function appendTransientLog(entry: TransientLogEntry, logPath: string = D
     console.warn(`[transient-log] 寫入失敗，已略過: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
+
+/** Interface skeleton only — no counting or budget logic yet. */
+export interface TransientLogOptions {
+  maxAttempts?: number;
+}
+
+export class TransientLog {
+  constructor(_logPath?: string, _options: TransientLogOptions = {}) {}
+  public append(_entry: TransientLogEntry): void {}
+  public clear(_jobId: string): void {}
+  public failureCountFor(_jobId: string): number {
+    return 0;
+  }
+  public hasExhaustedBudget(_jobId: string): boolean {
+    return false;
+  }
+}
