@@ -18,7 +18,7 @@ import {
 import { classifyFailure, UnverifiedSubmissionError } from './failure-policy';
 import { applyPriorityForScore } from './apply-priority';
 import { RateLimitCircuit } from './rate-limit-circuit';
-import { appendTransientLog, TransientStage } from './transient-log';
+import { TransientLog, TransientStage } from './transient-log';
 import { ProgressWatchdog } from './watchdog';
 import { decideRunGate } from './run-gate';
 import { buildRunSummary, RunSummaryStats } from './run-summary';
@@ -139,6 +139,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
 
   const startedAt = Date.now();
   const transientCounts: Record<string, number> = {};
+  const transientLog = new TransientLog();
   const rateLimitCircuit = new RateLimitCircuit();
   const watchdog = new ProgressWatchdog({
     stallMs: 15 * 60 * 1000,
@@ -171,8 +172,18 @@ export async function main(runMode: RunMode = resolveRunMode()) {
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(`[未完成評估] ${job.jobId} ${job.title}｜${stage}｜${kind}｜${reason}`);
     logEvent('transient_failure', { jobId: job.jobId, stage, kind, reason });
-    if (!isDryRun) {
-      appendTransientLog({ jobId: job.jobId, title: job.title, stage, kind, reason });
+    if (isDryRun) return;
+
+    transientLog.append({ jobId: job.jobId, title: job.title, stage, kind, reason });
+
+    // Retrying forever is the failure mode transient was meant to avoid on the
+    // other side. Once the budget is spent, let the job settle into the normal
+    // 14-day skipped TTL instead of burning a paid LLM call every run.
+    if (transientLog.hasExhaustedBudget(job.jobId)) {
+      const attempts = transientLog.failureCountFor(job.jobId);
+      console.warn(`[重試預算耗盡] ${job.jobId} 已連續失敗 ${attempts} 次，改記為略過並套用 14 天冷卻。`);
+      logEvent('transient_budget_exhausted', { jobId: job.jobId, attempts, kind });
+      record(job, 'skipped', `連續 ${attempts} 次未完成評估（最後一次：${kind}）\n${reason}`);
     }
   };
 
@@ -333,6 +344,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
 
         const applied = record(job, 'applied', reason, location, score, coverLetter);
         appliedCount++;
+        transientLog.clear(job.jobId);
         watchdog.tick();
         console.log(`[應徵成功] 已投遞第 ${appliedCount} 個職缺：「${job.title}」 - ${job.company}`);
         logEvent('apply_success', { jobId: job.jobId, score, company: job.company, nth: appliedCount });
