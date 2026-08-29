@@ -47,3 +47,13 @@ export function cutAtSentenceBoundary(text: string, maxCjkChars: number): string
   const cutEnd = lastBoundaryEnd > 0 ? lastBoundaryEnd : limitEnd;
   return characters.slice(0, cutEnd).join('').trimEnd();
 }
+
+/** Interface skeleton only — no dual-budget logic yet. */
+export interface CoverLetterBudget {
+  maxUnits?: number;
+  maxCjkChars?: number;
+}
+
+export function fitCoverLetter(text: string, _budget: CoverLetterBudget): string {
+  return text;
+}
