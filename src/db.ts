@@ -219,6 +219,12 @@ export class JobDatabase {
       );
     }
 
+    // A file that ends in a newline has no torn tail — whatever is damaged in it
+    // is complete, terminated data that stays on disk for inspection and cannot
+    // be welded into by the next append. Truncating it here destroyed recoverable
+    // records on a plain read, right after telling the operator to go inspect them.
+    if (raw.endsWith('\n') || raw.length === 0) return;
+
     // Repair a torn trailing write now, while it is still the last line. Left
     // in place, the next append turns it into an unreadable middle line.
     const tornTail = Buffer.byteLength(raw, 'utf8') > Buffer.byteLength(raw.slice(0, lastGoodEnd), 'utf8');
