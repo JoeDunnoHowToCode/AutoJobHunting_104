@@ -185,8 +185,10 @@ export class JobDatabase {
   private loadFromJsonl(raw: string, sourcePath: string = this.storePath): void {
     const lines = raw.split('\n');
     const today = this.getTodayDateString();
-    let lastGoodEnd = 0;
-    let offset = 0;
+    // Byte offsets, not UTF-16 indices: the store is mostly CJK (3 bytes each)
+    // and the repair below hands this straight to fs.truncateSync.
+    let lastGoodByteEnd = 0;
+    let byteOffset = 0;
 
     for (let position = 0; position < lines.length; position++) {
       const rawLine = lines[position];
@@ -194,11 +196,11 @@ export class JobDatabase {
       // 1 unconditionally pushed lastGoodEnd one past the end of a file whose
       // last record was complete but unterminated, which read as "not torn".
       const terminated = position < lines.length - 1;
-      offset += rawLine.length + (terminated ? 1 : 0);
+      byteOffset += Buffer.byteLength(rawLine, 'utf8') + (terminated ? 1 : 0);
 
       const line = rawLine.trim();
       if (!line) {
-        if (terminated) lastGoodEnd = offset;
+        if (terminated) lastGoodByteEnd = byteOffset;
         continue;
       }
 
@@ -211,7 +213,7 @@ export class JobDatabase {
         continue;
       }
 
-      lastGoodEnd = offset;
+      lastGoodByteEnd = byteOffset;
       this.index(stored, stored.date);
       if (stored.date === today) this.todayRecords.push(stored);
     }
@@ -230,18 +232,29 @@ export class JobDatabase {
 
     if (this.readOnly) return;
 
-    // Repair a torn trailing write now, while it is still the last line. Left
-    // in place, the next append turns it into an unreadable middle line.
-    if (lastGoodEnd === raw.length) {
-      // The record itself survived; only its terminating newline was lost. It is
-      // real data, so append the newline rather than dropping it — truncating
-      // here is what silently lost two applied records per crash.
-      fs.appendFileSync(sourcePath, '\n', 'utf8');
-      console.warn('[DB] 已補回上次中斷缺少的尾端換行。');
-      return;
+    // Every record has already been indexed by this point, so a repair that
+    // cannot be written (read-only mount, EACCES) must not take the run down
+    // with it — the next append is what would suffer, and that will fail loudly.
+    try {
+      const totalBytes = Buffer.byteLength(raw, 'utf8');
+      if (lastGoodByteEnd === totalBytes) {
+        // The record itself survived; only its terminating newline was lost. It
+        // is real data, so append the newline rather than dropping it.
+        fs.appendFileSync(sourcePath, '\n', 'utf8');
+        console.warn('[DB] 已補回上次中斷缺少的尾端換行。');
+        return;
+      }
+      // A genuinely half-written record. truncateSync drops exactly those bytes
+      // in one metadata operation; a read-modify-write of the whole file would
+      // open a window where a crash leaves the store empty, and would silently
+      // discard anything a concurrent run appended since this snapshot was read.
+      fs.truncateSync(sourcePath, lastGoodByteEnd);
+      console.warn('[DB] 已截斷上次中斷留下的殘缺尾行。');
+    } catch (error) {
+      console.error(
+        `[DB] 無法修復殘缺尾行，紀錄已照常載入: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
-    fs.writeFileSync(sourcePath, raw.slice(0, lastGoodEnd), 'utf8');
-    console.warn('[DB] 已修復上次中斷留下的殘缺尾行。');
   }
 
   public getNextApplyId(): number {
