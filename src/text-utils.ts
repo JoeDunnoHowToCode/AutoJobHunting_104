@@ -76,6 +76,7 @@ export function fitCoverLetter(text: string, budget: CoverLetterBudget): string 
   let cjk = 0;
   let lastBoundaryEnd = -1;
   let limitEnd = characters.length;
+  let exceeded = false;
 
   for (let index = 0; index < characters.length; index++) {
     const char = characters[index];
@@ -86,6 +87,7 @@ export function fitCoverLetter(text: string, budget: CoverLetterBudget): string 
     if ((maxUnits !== undefined && nextUnits > maxUnits) ||
         (maxCjkChars !== undefined && nextCjk > maxCjkChars)) {
       limitEnd = index;
+      exceeded = true;
       break;
     }
 
@@ -93,6 +95,13 @@ export function fitCoverLetter(text: string, budget: CoverLetterBudget): string 
     cjk = nextCjk;
     if (SENTENCE_ENDINGS.has(char)) lastBoundaryEnd = index + 1;
   }
+
+  // Nothing exceeded either budget, so the letter is already valid. Falling
+  // through to the sentence-boundary cut here would amputate everything after
+  // the last 。！？ — a sign-off, a closing bracket, an English full stop — and
+  // submit the mutilated letter, because the caller's write-back check compares
+  // against this return value rather than against the original.
+  if (!exceeded) return text;
 
   const cutEnd = lastBoundaryEnd > 0 ? lastBoundaryEnd : limitEnd;
   // trimEnd can only shorten, so both budgets still hold afterwards.
