@@ -15,7 +15,7 @@ import {
   resolveRunMode,
   RunMode,
 } from './application-action';
-import { classifyFailure, UnverifiedSubmissionError } from './failure-policy';
+import { classifyFailure, isRateLimitError, UnverifiedSubmissionError } from './failure-policy';
 import { applyPriorityForScore } from './apply-priority';
 import { RateLimitCircuit } from './rate-limit-circuit';
 import { TransientLog, TransientStage } from './transient-log';
@@ -161,8 +161,11 @@ export async function main(runMode: RunMode = resolveRunMode()) {
     if (error instanceof UnverifiedSubmissionError) return 'unverified';
     if (error instanceof ApplicationFormError) return 'form_unavailable';
     if (error instanceof PlatformAccessError) return 'platform_limited';
+    // Shared recogniser: this kind decides whether the failure spends the job's
+    // retry budget, so a 429 that only says "Too Many Requests" must not fall
+    // through to `other` and settle a job the provider never let us evaluate.
+    if (isRateLimitError(error)) return 'rate_limited';
     const message = error instanceof Error ? error.message : String(error);
-    if (/429|quota|resource exhausted|rate limit/i.test(message)) return 'rate_limited';
     if (/schema validation/i.test(message)) return 'schema';
     if (/net::ERR_|network|fetch failed|timeout/i.test(message)) return 'network';
     return 'other';

@@ -11,8 +11,9 @@ import * as path from 'path';
  * call, an apply slot and a screenshot on every single run, forever. Reading
  * the log back is what bounds it.
  *
- * The ceiling must not become a trap of its own, so failures expire after
- * BUDGET_WINDOW_DAYS — the same expiry the database gives a skipped record.
+ * Two rules keep the ceiling from becoming a trap of its own: failures expire
+ * after BUDGET_WINDOW_DAYS, and outage-shaped kinds never count at all. Both
+ * exist so that a bad provider day cannot settle a job that was never evaluated.
  */
 
 export type TransientStage = 'jd' | 'llm' | 'apply' | 'search';
@@ -34,6 +35,21 @@ const DEFAULT_LOG_PATH = path.resolve(__dirname, '..', 'logs', 'transient.jsonl'
 const DEFAULT_MAX_ATTEMPTS = 3;
 /** Matches the database's skipped-record TTL, so the two expiries stay in step. */
 const BUDGET_WINDOW_DAYS = 14;
+
+/**
+ * Kinds that describe a run-wide outage rather than anything about the job.
+ *
+ * They are still logged, but they must never count toward a per-job budget: a
+ * single LLM quota day trips several jobs at once, and three such days would
+ * settle them all into a 14-day exclusion. That is exactly the regression
+ * failure-policy.ts exists to prevent — a quota outage silently excluding jobs
+ * that were never actually evaluated.
+ */
+const BUDGET_EXEMPT_KINDS = new Set(['rate_limited', 'network', 'platform_limited']);
+
+function countsTowardBudget(kind: unknown): boolean {
+  return !BUDGET_EXEMPT_KINDS.has(String(kind ?? ''));
+}
 
 /** Marks every prior failure for a job as resolved without rewriting history. */
 interface ClearMarker {
@@ -78,7 +94,9 @@ export class TransientLog {
         if (Number.isFinite(stamp) && stamp < cutoff) continue;
 
         if (parsed.cleared) this.counts.delete(parsed.jobId);
-        else this.counts.set(parsed.jobId, (this.counts.get(parsed.jobId) ?? 0) + 1);
+        else if (countsTowardBudget(parsed.kind)) {
+          this.counts.set(parsed.jobId, (this.counts.get(parsed.jobId) ?? 0) + 1);
+        }
       }
 
       this.repairTornTail(raw);
@@ -123,6 +141,8 @@ export class TransientLog {
 
   public append(entry: TransientLogEntry): void {
     this.appendLine({ ts: new Date().toISOString(), ...entry });
+    // Logged either way; only job-specific failures spend the budget.
+    if (!countsTowardBudget(entry.kind)) return;
     this.counts.set(entry.jobId, (this.counts.get(entry.jobId) ?? 0) + 1);
   }
 
