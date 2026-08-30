@@ -128,6 +128,22 @@ export class JobDatabase {
           return;
         }
 
+        // The sniff only reads line 1, so a JSONL store whose first line is torn
+        // or carries a BOM also fails it. Confirm the legacy shape by actually
+        // parsing the file before committing to that path: letting the parse
+        // error escape used to throw out of the constructor and brick every
+        // subsequent run, before the watchdog or any operator notice could fire.
+        let legacyRecords: StoredRecord[];
+        try {
+          legacyRecords = this.readLegacyRecords(this.storePath);
+        } catch {
+          console.warn(
+            `[DB] ${path.basename(this.storePath)} 首行無法解析且不是舊格式，改以 JSONL 逐行讀取。`,
+          );
+          this.loadFromJsonl(raw);
+          return;
+        }
+
         // The caller handed us the legacy date-bucketed file. Index it so
         // de-duplication still works, but never append JSONL into it.
         this.writePath = this.storePath.endsWith('.json')
@@ -136,7 +152,7 @@ export class JobDatabase {
         console.warn(
           `[DB] ${path.basename(this.storePath)} 是舊格式，僅供讀取；新紀錄將寫入 ${path.basename(this.writePath)}。`,
         );
-        for (const record of this.readLegacyRecords(this.storePath)) {
+        for (const record of legacyRecords) {
           this.index(record, record.date);
         }
         if (fs.existsSync(this.writePath)) {
