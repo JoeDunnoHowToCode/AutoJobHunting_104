@@ -13,7 +13,9 @@ settings.json
 # Personal data
 resume.json
 resume.txt
-applyRecord.json
+# Glob, not an exact name: backup and migration copies (applyRecord.json.bak-*,
+# applyRecord.jsonl) are the same personal data and must not slip past this.
+applyRecord.json*
 
 # Logs & Debugging
 *.log
@@ -33,9 +35,6 @@ online_resume_extracted.json
 
 # Transient failure log (see src/transient-log.ts)
 logs/
-
-# Append-only record store (migrated from applyRecord.json)
-applyRecord.jsonl
 
 # Failure-site screenshots (see captureFailureArtifact)
 artifacts/
