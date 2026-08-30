@@ -26,7 +26,12 @@ export interface RunSummaryStats {
   processedCount: number;
   applied: AppliedJobSummary[];
   skippedCount: number;
-  /** Failures that were logged but deliberately kept out of applyRecord. */
+  /**
+   * Failures that were logged but deliberately kept out of applyRecord, and are
+   * therefore genuinely retried next round. A failure that spent its retry
+   * budget is settled instead and is counted in `skippedCount` only, so these
+   * two buckets never describe the same job.
+   */
   transientCounts: Record<string, number>;
   stalled: boolean;
 }

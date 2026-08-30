@@ -172,16 +172,21 @@ export async function main(runMode: RunMode = resolveRunMode()) {
   };
 
   /**
-   * A failure that leaves the job a valid candidate. Deliberately does NOT
-   * touch the database — a `failed` row used to exclude the job forever.
+   * A failure that leaves the job a valid candidate. It touches the database in
+   * exactly one case — when the job has spent its retry budget and is therefore
+   * settled rather than merely unevaluated. Outage-shaped kinds never spend that
+   * budget (see transient-log.ts), so a quota day cannot settle anything.
    */
   const recordTransient = (job: ScrapedJob, stage: TransientStage, error: unknown): void => {
     const kind = transientKindOf(error);
-    transientCounts[kind] = (transientCounts[kind] ?? 0) + 1;
     const reason = error instanceof Error ? error.message : String(error);
+    const countAsTransient = () => { transientCounts[kind] = (transientCounts[kind] ?? 0) + 1; };
     console.warn(`[未完成評估] ${job.jobId} ${job.title}｜${stage}｜${kind}｜${reason}`);
     logEvent('transient_failure', { jobId: job.jobId, stage, kind, reason });
-    if (isDryRun) return;
+    if (isDryRun) {
+      countAsTransient();
+      return;
+    }
 
     transientLog.append({ jobId: job.jobId, title: job.title, stage, kind, reason });
 
@@ -197,7 +202,13 @@ export async function main(runMode: RunMode = resolveRunMode()) {
       // a spent budget against it; otherwise the next blip after the TTL expires
       // settles it again immediately.
       transientLog.clear(job.jobId);
+      // Settled, not unevaluated: counting it again under transientCounts would
+      // put one failure in two contradictory buckets of the same summary, one of
+      // which promises a retry that will not happen for 14 days.
+      return;
     }
+
+    countAsTransient();
   };
 
   const record = (job: ScrapedJob, status: JobRecord['status'], reason: string, location = '未知', score = 0, coverLetter?: string): JobRecord => {
@@ -280,9 +291,11 @@ export async function main(runMode: RunMode = resolveRunMode()) {
   };
 
   /**
-   * Single funnel for every job-level failure. `permanent` failures are the only
-   * ones allowed to reach the database; a `transient` failure leaves no trace
-   * that hasBeenProcessed() can see, so the job is retried next round.
+   * Single funnel for every job-level failure. `permanent` failures reach the
+   * database immediately; a `transient` failure leaves no trace that
+   * hasBeenProcessed() can see, so the job is retried next round — until it
+   * spends its per-job retry budget, at which point recordTransient settles it
+   * as skipped. Outage-shaped kinds never spend that budget.
    */
   const handleFailure = (
     job: ScrapedJob,
