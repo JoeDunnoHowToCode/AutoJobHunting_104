@@ -197,7 +197,16 @@ export async function main(runMode: RunMode = resolveRunMode()) {
       const attempts = transientLog.failureCountFor(job.jobId);
       console.warn(`[重試預算耗盡] ${job.jobId} 14 天內已累計失敗 ${attempts} 次，改記為略過並套用 14 天冷卻。`);
       logEvent('transient_budget_exhausted', { jobId: job.jobId, attempts, kind });
-      record(job, 'skipped', `14 天內 ${attempts} 次未完成評估（最後一次：${kind}）\n${reason}`);
+      try {
+        record(job, 'skipped', `14 天內 ${attempts} 次未完成評估（最後一次：${kind}）\n${reason}`);
+      } catch (writeError) {
+        // This runs inside a catch handler; letting a disk error escape here
+        // would skip whatever the caller does after it, including arming the
+        // rate-limit circuit. Fall back to reporting it as unevaluated.
+        console.error(`[重試預算耗盡] 寫入略過紀錄失敗 (${job.jobId}):`, writeError);
+        countAsTransient();
+        return;
+      }
       // The database now owns this job's cooldown, so the log must stop holding
       // a spent budget against it; otherwise the next blip after the TTL expires
       // settles it again immediately.
@@ -431,9 +440,12 @@ export async function main(runMode: RunMode = resolveRunMode()) {
         enqueueApply(platform, job, location, evaluation.score, formattedReason, coverLetter);
         handedToApply = true;
       } catch (error) {
+        // Arm the circuit before anything that can touch disk: handleFailure now
+        // writes a record when a budget is spent, and an ENOSPC there used to
+        // escape this handler and leave the 429 breaker permanently unarmed.
+        rateLimitCircuit.recordFailure(error);
         // 31 jobs were lost forever to plain 429s under the old `failed` row.
         handleFailure(job, 'llm', error, location);
-        rateLimitCircuit.recordFailure(error);
         if (rateLimitCircuit.shouldStop) {
           await stopForRateLimit(rateLimitCircuit.consecutiveCount);
         }
