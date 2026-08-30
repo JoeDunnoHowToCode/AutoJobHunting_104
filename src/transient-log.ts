@@ -52,7 +52,9 @@ export class TransientLog {
     // damaged log degrades to "no history" rather than throwing.
     try {
       if (!fs.existsSync(this.logPath) || !fs.statSync(this.logPath).isFile()) return;
-      for (const line of fs.readFileSync(this.logPath, 'utf8').split('\n')) {
+      const raw = fs.readFileSync(this.logPath, 'utf8');
+
+      for (const line of raw.split('\n')) {
         if (!line.trim()) continue;
         let parsed: (TransientLogEntry & Partial<ClearMarker>) | undefined;
         try {
@@ -65,9 +67,36 @@ export class TransientLog {
         if (parsed.cleared) this.counts.delete(parsed.jobId);
         else this.counts.set(parsed.jobId, (this.counts.get(parsed.jobId) ?? 0) + 1);
       }
+
+      this.repairTornTail(raw);
     } catch (error) {
       console.warn(`[transient-log] 讀取失敗，本輪視為無歷史紀錄: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /**
+   * Without this the next append welds onto a half-written last line, the count
+   * stops advancing and the budget never fires again — reopening the very trap
+   * it was added to close. Same rule as the record store: a record that lost
+   * only its newline is kept, a genuinely half-written one is dropped.
+   */
+  private repairTornTail(raw: string): void {
+    if (!raw || raw.endsWith('\n')) return;
+    const lines = raw.split('\n');
+    const tail = lines[lines.length - 1];
+
+    let tailIsComplete = false;
+    try {
+      tailIsComplete = Boolean(JSON.parse(tail));
+    } catch {
+      tailIsComplete = false;
+    }
+
+    if (tailIsComplete) {
+      fs.appendFileSync(this.logPath, '\n', 'utf8');
+      return;
+    }
+    fs.truncateSync(this.logPath, Buffer.byteLength(raw, 'utf8') - Buffer.byteLength(tail, 'utf8'));
   }
 
   private appendLine(payload: object): void {
