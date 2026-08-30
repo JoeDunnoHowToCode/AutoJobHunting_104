@@ -187,9 +187,13 @@ export async function main(runMode: RunMode = resolveRunMode()) {
     // 14-day skipped TTL instead of burning a paid LLM call every run.
     if (transientLog.hasExhaustedBudget(job.jobId)) {
       const attempts = transientLog.failureCountFor(job.jobId);
-      console.warn(`[重試預算耗盡] ${job.jobId} 已連續失敗 ${attempts} 次，改記為略過並套用 14 天冷卻。`);
+      console.warn(`[重試預算耗盡] ${job.jobId} 14 天內已累計失敗 ${attempts} 次，改記為略過並套用 14 天冷卻。`);
       logEvent('transient_budget_exhausted', { jobId: job.jobId, attempts, kind });
-      record(job, 'skipped', `連續 ${attempts} 次未完成評估（最後一次：${kind}）\n${reason}`);
+      record(job, 'skipped', `14 天內 ${attempts} 次未完成評估（最後一次：${kind}）\n${reason}`);
+      // The database now owns this job's cooldown, so the log must stop holding
+      // a spent budget against it; otherwise the next blip after the TTL expires
+      // settles it again immediately.
+      transientLog.clear(job.jobId);
     }
   };
 

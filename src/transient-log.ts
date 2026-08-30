@@ -10,6 +10,9 @@ import * as path from 'path';
  * trap: a job that fails the same way every time costs a JD fetch, a paid LLM
  * call, an apply slot and a screenshot on every single run, forever. Reading
  * the log back is what bounds it.
+ *
+ * The ceiling must not become a trap of its own, so failures expire after
+ * BUDGET_WINDOW_DAYS — the same expiry the database gives a skipped record.
  */
 
 export type TransientStage = 'jd' | 'llm' | 'apply' | 'search';
@@ -29,6 +32,8 @@ export interface TransientLogOptions {
 
 const DEFAULT_LOG_PATH = path.resolve(__dirname, '..', 'logs', 'transient.jsonl');
 const DEFAULT_MAX_ATTEMPTS = 3;
+/** Matches the database's skipped-record TTL, so the two expiries stay in step. */
+const BUDGET_WINDOW_DAYS = 14;
 
 /** Marks every prior failure for a job as resolved without rewriting history. */
 interface ClearMarker {
@@ -53,16 +58,24 @@ export class TransientLog {
     try {
       if (!fs.existsSync(this.logPath) || !fs.statSync(this.logPath).isFile()) return;
       const raw = fs.readFileSync(this.logPath, 'utf8');
+      const cutoff = Date.now() - BUDGET_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
       for (const line of raw.split('\n')) {
         if (!line.trim()) continue;
-        let parsed: (TransientLogEntry & Partial<ClearMarker>) | undefined;
+        let parsed: (TransientLogEntry & Partial<ClearMarker> & { ts?: string }) | undefined;
         try {
           parsed = JSON.parse(line);
         } catch {
           continue;
         }
         if (!parsed?.jobId) continue;
+
+        // Past the window the database's own 14-day skipped TTL has expired too,
+        // so these failures must stop counting. Without the expiry a job that
+        // once spent its budget starts every later attempt at the ceiling and is
+        // re-settled by its first blip — a permanent one-strike ratchet.
+        const stamp = parsed.ts ? Date.parse(parsed.ts) : NaN;
+        if (Number.isFinite(stamp) && stamp < cutoff) continue;
 
         if (parsed.cleared) this.counts.delete(parsed.jobId);
         else this.counts.set(parsed.jobId, (this.counts.get(parsed.jobId) ?? 0) + 1);
