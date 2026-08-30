@@ -98,26 +98,44 @@ describe('cutAtSentenceBoundary 維持原有 CJK 語意（既有呼叫端不受�
 
 // 對照真實 378 封已投遞自薦信，確認任何一個可能的 maxlength 都不會再讓
 // 回讀比對失敗——這正是 P0-2 在正式環境會炸的那一步。
-describe('fitCoverLetter — 真實自薦信全量回歸', () => {
+// applyRecord.json is personal data and gitignored, so it is absent on a fresh
+// clone, in CI and on the VM. Reading it at module scope made the whole file
+// fail to collect there — `Test Files 1 failed / Tests no tests` — so load it
+// defensively and skip the corpus regression when it is not available.
+function loadRealCoverLetters(): string[] {
+  const corpusPath = path.resolve(__dirname, '..', 'applyRecord.json');
+  if (!fs.existsSync(corpusPath)) return [];
   const letters: string[] = [];
-  const raw = JSON.parse(
-    fs.readFileSync(path.resolve(__dirname, '..', 'applyRecord.json'), 'utf8'),
-  );
+  const raw = JSON.parse(fs.readFileSync(corpusPath, 'utf8'));
   for (const date of Object.keys(raw)) {
     for (const record of raw[date].applied ?? []) {
       if (record.coverLetter) letters.push(record.coverLetter);
     }
   }
+  return letters;
+}
 
+const realLetters = loadRealCoverLetters();
+
+describe.skipIf(realLetters.length === 0)('fitCoverLetter — 真實自薦信全量回歸', () => {
   it('樣本讀取成功', () => {
-    expect(letters.length).toBeGreaterThan(300);
+    expect(realLetters.length).toBeGreaterThan(300);
   });
 
   it.each([200, 250, 300, 500, 1000])(
     'maxUnits=%i：378 封全部裁切後皆不超過上限',
     maxUnits => {
-      const violations = letters.filter(letter => fitCoverLetter(letter, { maxUnits }).length > maxUnits);
+      const violations = realLetters.filter(letter => fitCoverLetter(letter, { maxUnits }).length > maxUnits);
       expect(violations).toHaveLength(0);
     },
   );
+
+  // 只斷言上界會漏掉「切太多」：一封本來就符合預算的信被切回最後一個句號，
+  // 長度仍然合格，回寫比對也拿裁切後的版本去比，所以殘缺的信會直接送出。
+  it('已符合預算的信件必須原樣返回，不得多切', () => {
+    const mutilated = realLetters.filter(
+      letter => letter.length <= 1000 && fitCoverLetter(letter, { maxUnits: 1000 }) !== letter,
+    );
+    expect(mutilated).toHaveLength(0);
+  });
 });
