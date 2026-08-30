@@ -37,11 +37,11 @@ export interface JobDatabaseOptions {
  * lost the entire run's history — and losing history is what causes duplicate
  * applications.
  *
- * Loading never throws. An unreadable store means no de-duplication at all,
- * which is precisely the state that produces duplicate applications — strictly
- * worse than reading what survived and reporting the damage. Corrupt lines are
- * counted and surfaced; a torn trailing line is repaired in place so the next
- * append cannot weld it into the middle of the file.
+ * Loading reads what survived rather than giving up: no de-duplication at all is
+ * precisely the state that produces duplicate applications. A corrupt line is
+ * skipped, counted in `corruptLineCount` (which the caller is expected to
+ * surface — see src/index.ts) and left on disk for inspection. Only a genuinely
+ * half-written trailing line is repaired, and never by rewriting the file.
  */
 export class JobDatabase {
   public corruptLineCount = 0;
@@ -208,6 +208,13 @@ export class JobDatabase {
       try {
         stored = JSON.parse(line);
       } catch {
+        // Only the last line can legitimately be half-written (SIGKILL during
+        // append), and the repair below deals with it. Counting that as damage
+        // would raise a data-loss alarm on every ordinary interrupted run.
+        if (!terminated) {
+          console.warn('[DB] 最後一行不完整，已略過（上次執行可能被強制中斷）。');
+          continue;
+        }
         this.corruptLineCount++;
         console.error(`[DB] 第 ${position + 1} 行無法解析，已略過該筆紀錄。`);
         continue;

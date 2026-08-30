@@ -108,6 +108,12 @@ export async function main(runMode: RunMode = resolveRunMode()) {
   // Build the store only after required input is valid. In dry-run it can read
   // historical records for de-duplication but is structurally unable to write.
   const database = new JobDatabase(config.dbPath, { readOnly: isDryRun });
+  // Damaged lines mean an incomplete de-duplication index, i.e. jobs that will
+  // be applied to twice. On an unattended VM a bare console line is invisible,
+  // so put it on the machine-filterable channel the operator actually greps.
+  if (database.corruptLineCount > 0) {
+    logEvent('db_corrupt_lines', { count: database.corruptLineCount, path: config.dbPath });
+  }
 
   console.log('搜尋關鍵字:', searchKeywords.join(', '));
   console.log('契合度門檻分數:', config.scoreThreshold);
