@@ -9,7 +9,11 @@ import { countCjkChars } from './text-utils';
  * rather than on a guess (決議 #12).
  */
 
-/** Mirrors the negative-vocabulary list in ai/prompts.ts. */
+/**
+ * Mirrors BOTH negative-vocabulary rules in ai/prompts.ts — the 嚴禁詞彙 list and
+ * the 嚴禁空泛寒暄 list. Auditing only the first one is how `您好，在 104 看到`
+ * stayed missing while being the only banned phrase with real traffic.
+ */
 export const BANNED_PHRASES: string[] = [
   '扎實',
   '顯著提升',
@@ -25,6 +29,7 @@ export const BANNED_PHRASES: string[] = [
   '期盼能運用',
   '貴公司享有盛名',
   '希望能給我一個機會',
+  '您好，在 104 看到',
 ];
 
 export type CoverLetterFlag = 'too_short' | 'too_long' | 'banned_phrase';
