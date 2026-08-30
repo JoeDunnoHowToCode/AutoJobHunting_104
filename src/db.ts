@@ -190,12 +190,15 @@ export class JobDatabase {
 
     for (let position = 0; position < lines.length; position++) {
       const rawLine = lines[position];
-      const lineStart = offset;
-      offset += rawLine.length + 1;
+      // Only the final element of a split lacks its terminating newline. Adding
+      // 1 unconditionally pushed lastGoodEnd one past the end of a file whose
+      // last record was complete but unterminated, which read as "not torn".
+      const terminated = position < lines.length - 1;
+      offset += rawLine.length + (terminated ? 1 : 0);
 
       const line = rawLine.trim();
       if (!line) {
-        if (position < lines.length - 1) lastGoodEnd = offset;
+        if (terminated) lastGoodEnd = offset;
         continue;
       }
 
@@ -208,7 +211,7 @@ export class JobDatabase {
         continue;
       }
 
-      lastGoodEnd = lineStart + rawLine.length + 1;
+      lastGoodEnd = offset;
       this.index(stored, stored.date);
       if (stored.date === today) this.todayRecords.push(stored);
     }
@@ -225,13 +228,20 @@ export class JobDatabase {
     // records on a plain read, right after telling the operator to go inspect them.
     if (raw.endsWith('\n') || raw.length === 0) return;
 
+    if (this.readOnly) return;
+
     // Repair a torn trailing write now, while it is still the last line. Left
     // in place, the next append turns it into an unreadable middle line.
-    const tornTail = Buffer.byteLength(raw, 'utf8') > Buffer.byteLength(raw.slice(0, lastGoodEnd), 'utf8');
-    if (tornTail && !this.readOnly) {
-      fs.writeFileSync(sourcePath, raw.slice(0, lastGoodEnd), 'utf8');
-      console.warn('[DB] 已修復上次中斷留下的殘缺尾行。');
+    if (lastGoodEnd === raw.length) {
+      // The record itself survived; only its terminating newline was lost. It is
+      // real data, so append the newline rather than dropping it — truncating
+      // here is what silently lost two applied records per crash.
+      fs.appendFileSync(sourcePath, '\n', 'utf8');
+      console.warn('[DB] 已補回上次中斷缺少的尾端換行。');
+      return;
     }
+    fs.writeFileSync(sourcePath, raw.slice(0, lastGoodEnd), 'utf8');
+    console.warn('[DB] 已修復上次中斷留下的殘缺尾行。');
   }
 
   public getNextApplyId(): number {
