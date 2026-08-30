@@ -39,6 +39,42 @@ function statusOf(candidate: { status?: unknown; code?: unknown }): number {
 /** Platform form-error codes that mean the job itself is settled. */
 const SETTLED_FORM_CODES = new Set(['ALREADY_APPLIED', 'JOB_UNAVAILABLE']);
 
+/**
+ * Positive evidence that a failure is transient.
+ *
+ * Unlike `classifyFailure` this has no default: an unrecognised error returns
+ * false. That is what lets callers which must NOT retry unknown failures — the
+ * provider backoff in ai/retry.ts, where a bad API key has to fail immediately —
+ * share these recognisers instead of maintaining a narrower private copy that
+ * drifts. The copy in retry.ts missed `quota` and the JSON-body probe, so the
+ * provider's own commonest error got zero retries.
+ */
+export function isTransientSignal(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { code?: unknown; message?: unknown; status?: unknown; cause?: { code?: unknown } };
+
+  const status = statusOf(candidate);
+  if (status === 408 || status === 409 || status === 425 || status === 429 || status >= 500) return true;
+
+  const code = String(candidate.code ?? candidate.cause?.code ?? '').toUpperCase();
+  if (TRANSIENT_NETWORK_CODES.has(code)) return true;
+
+  const message = String(candidate.message ?? '');
+  if (TRANSIENT_MESSAGE_PATTERN.test(message)) return true;
+  // Provider SDKs often bury the real status inside a JSON string body.
+  return /"code"\s*:\s*(429|5\d{2})/.test(message);
+}
+
+const RATE_LIMIT_PATTERN = /429|too many requests|rate limit|quota|resource exhausted/i;
+
+/** Shared 429 recogniser, so backoff choice and circuit tripping never disagree. */
+export function isRateLimitError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { status?: unknown; code?: unknown; message?: unknown };
+  if (statusOf(candidate) === 429) return true;
+  return RATE_LIMIT_PATTERN.test(String(candidate.message ?? ''));
+}
+
 export function classifyFailure(error: unknown): FailureKind {
   if (!error || typeof error !== 'object') return 'transient';
 
@@ -62,18 +98,7 @@ export function classifyFailure(error: unknown): FailureKind {
   // it clicks anything.
   if (candidate.name === 'UnverifiedSubmissionError') return 'transient';
 
-  const status = statusOf(candidate);
-  if (status === 408 || status === 409 || status === 425 || status === 429 || status >= 500) {
-    return 'transient';
-  }
-
-  const code = String(candidate.code ?? candidate.cause?.code ?? '').toUpperCase();
-  if (TRANSIENT_NETWORK_CODES.has(code)) return 'transient';
-
-  const message = String(candidate.message ?? '');
-  if (TRANSIENT_MESSAGE_PATTERN.test(message)) return 'transient';
-  // Provider SDKs often bury the real status inside a JSON string body.
-  if (/"code"\s*:\s*(429|5\d{2})/.test(message)) return 'transient';
+  if (isTransientSignal(error)) return 'transient';
 
   // Nothing identified this as settled. Defaulting to transient costs one extra
   // evaluation next round; defaulting to permanent costs the job forever.
