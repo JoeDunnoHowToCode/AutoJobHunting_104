@@ -15,11 +15,24 @@ import {
   resolveRunMode,
   RunMode,
 } from './application-action';
+import { classifyFailure, isRateLimitError, UnverifiedSubmissionError } from './failure-policy';
+import { applyPriorityForScore } from './apply-priority';
+import { RateLimitCircuit } from './rate-limit-circuit';
+import { TransientLog, TransientStage } from './transient-log';
+import { ProgressWatchdog } from './watchdog';
+import { decideRunGate } from './run-gate';
+import { buildRunSummary, RunSummaryStats } from './run-summary';
+import { logEvent } from './events';
 
+/**
+ * Local-time ISO stamp without the timezone suffix, e.g. 2026-08-26T14:23:11.
+ * The date half used to be dropped, which left `processedAt` unusable for the
+ * legacy-format migration in db.ts (it splits on 'T' to recover a date key).
+ */
 function getLocalTime(): string {
   const now = new Date();
   const tzOffset = now.getTimezoneOffset() * 60000;
-  return new Date(now.getTime() - tzOffset).toISOString().split('T')[1].split('.')[0];
+  return new Date(now.getTime() - tzOffset).toISOString().split('.')[0];
 }
 
 function sleep(milliseconds: number): Promise<void> {
@@ -95,6 +108,12 @@ export async function main(runMode: RunMode = resolveRunMode()) {
   // Build the store only after required input is valid. In dry-run it can read
   // historical records for de-duplication but is structurally unable to write.
   const database = new JobDatabase(config.dbPath, { readOnly: isDryRun });
+  // Damaged lines mean an incomplete de-duplication index, i.e. jobs that will
+  // be applied to twice. On an unattended VM a bare console line is invisible,
+  // so put it on the machine-filterable channel the operator actually greps.
+  if (database.corruptLineCount > 0) {
+    logEvent('db_corrupt_lines', { count: database.corruptLineCount, path: config.dbPath });
+  }
 
   console.log('搜尋關鍵字:', searchKeywords.join(', '));
   console.log('契合度門檻分數:', config.scoreThreshold);
@@ -123,6 +142,83 @@ export async function main(runMode: RunMode = resolveRunMode()) {
   const completedActionCount = () => isDryRun ? preflightCount : appliedCount;
   const reachedRunLimit = () => completedActionCount() >= runLimit;
   const reachedCandidateLimit = () => isDryRun && dryRunCandidateCount >= 1;
+
+  const startedAt = Date.now();
+  const transientCounts: Record<string, number> = {};
+  const transientLog = new TransientLog();
+  const rateLimitCircuit = new RateLimitCircuit();
+  const watchdog = new ProgressWatchdog({
+    stallMs: 15 * 60 * 1000,
+    onStall: () => {
+      console.error('[watchdog] 15 分鐘無進展，中止本輪。');
+      logEvent('watchdog_stall', { stallMinutes: 15 });
+      void stopForStall();
+    },
+  });
+
+  /** Maps a failure to a transient-log kind so the summary can group them. */
+  const transientKindOf = (error: unknown): string => {
+    if (error instanceof UnverifiedSubmissionError) return 'unverified';
+    if (error instanceof ApplicationFormError) return 'form_unavailable';
+    if (error instanceof PlatformAccessError) return 'platform_limited';
+    // Shared recogniser: this kind decides whether the failure spends the job's
+    // retry budget, so a 429 that only says "Too Many Requests" must not fall
+    // through to `other` and settle a job the provider never let us evaluate.
+    if (isRateLimitError(error)) return 'rate_limited';
+    const message = error instanceof Error ? error.message : String(error);
+    if (/schema validation/i.test(message)) return 'schema';
+    if (/net::ERR_|network|fetch failed|timeout/i.test(message)) return 'network';
+    return 'other';
+  };
+
+  /**
+   * A failure that leaves the job a valid candidate. It touches the database in
+   * exactly one case — when the job has spent its retry budget and is therefore
+   * settled rather than merely unevaluated. Outage-shaped kinds never spend that
+   * budget (see transient-log.ts), so a quota day cannot settle anything.
+   */
+  const recordTransient = (job: ScrapedJob, stage: TransientStage, error: unknown): void => {
+    const kind = transientKindOf(error);
+    const reason = error instanceof Error ? error.message : String(error);
+    const countAsTransient = () => { transientCounts[kind] = (transientCounts[kind] ?? 0) + 1; };
+    console.warn(`[未完成評估] ${job.jobId} ${job.title}｜${stage}｜${kind}｜${reason}`);
+    logEvent('transient_failure', { jobId: job.jobId, stage, kind, reason });
+    if (isDryRun) {
+      countAsTransient();
+      return;
+    }
+
+    transientLog.append({ jobId: job.jobId, title: job.title, stage, kind, reason });
+
+    // Retrying forever is the failure mode transient was meant to avoid on the
+    // other side. Once the budget is spent, let the job settle into the normal
+    // 14-day skipped TTL instead of burning a paid LLM call every run.
+    if (transientLog.hasExhaustedBudget(job.jobId)) {
+      const attempts = transientLog.failureCountFor(job.jobId);
+      console.warn(`[重試預算耗盡] ${job.jobId} 14 天內已累計失敗 ${attempts} 次，改記為略過並套用 14 天冷卻。`);
+      logEvent('transient_budget_exhausted', { jobId: job.jobId, attempts, kind });
+      try {
+        record(job, 'skipped', `14 天內 ${attempts} 次未完成評估（最後一次：${kind}）\n${reason}`);
+      } catch (writeError) {
+        // This runs inside a catch handler; letting a disk error escape here
+        // would skip whatever the caller does after it, including arming the
+        // rate-limit circuit. Fall back to reporting it as unevaluated.
+        console.error(`[重試預算耗盡] 寫入略過紀錄失敗 (${job.jobId}):`, writeError);
+        countAsTransient();
+        return;
+      }
+      // The database now owns this job's cooldown, so the log must stop holding
+      // a spent budget against it; otherwise the next blip after the TTL expires
+      // settles it again immediately.
+      transientLog.clear(job.jobId);
+      // Settled, not unevaluated: counting it again under transientCounts would
+      // put one failure in two contradictory buckets of the same summary, one of
+      // which promises a retry that will not happen for 14 days.
+      return;
+    }
+
+    countAsTransient();
+  };
 
   const record = (job: ScrapedJob, status: JobRecord['status'], reason: string, location = '未知', score = 0, coverLetter?: string): JobRecord => {
     const item: JobRecord = {
@@ -168,6 +264,63 @@ export async function main(runMode: RunMode = resolveRunMode()) {
     }
   };
 
+  const stopForStall = async (): Promise<void> => {
+    if (pipelineStopped) return;
+    pipelineStopped = true;
+    jdQueue.clear();
+    llmQueue.clear();
+    applyQueue.clear();
+    pipeline.clearPending();
+    if (!isDryRun && !stopNoticeSent) {
+      stopNoticeSent = true;
+      await sendTelegramMessage('⏱ <b>[自動投遞系統停滯中止]</b>\n15 分鐘無任何進展，已清空佇列並結束本輪。');
+    }
+  };
+
+  /**
+   * Quota exhaustion is not something backoff can fix. Stop the run rather than
+   * burning ~36s of retries per remaining job.
+   */
+  const stopForRateLimit = async (consecutive: number): Promise<void> => {
+    if (pipelineStopped) return;
+    pipelineStopped = true;
+    jdQueue.clear();
+    llmQueue.clear();
+    applyQueue.clear();
+    pipeline.clearPending();
+    console.error(`[熔斷] 連續 ${consecutive} 次 API 速率限制，停止本輪以免耗盡配額。`);
+    logEvent('circuit_trip', { reason: 'rate_limit', consecutive });
+    if (!isDryRun && !stopNoticeSent) {
+      stopNoticeSent = true;
+      await sendTelegramMessage(
+        `🧯 <b>[自動投遞系統熔斷]</b>\n連續 ${consecutive} 次 API 速率限制（429），已停止本輪。\n` +
+        `未評估的職缺沒有寫入紀錄，下輪會重新處理。`,
+      );
+    }
+  };
+
+  /**
+   * Single funnel for every job-level failure. `permanent` failures reach the
+   * database immediately; a `transient` failure leaves no trace that
+   * hasBeenProcessed() can see, so the job is retried next round — until it
+   * spends its per-job retry budget, at which point recordTransient settles it
+   * as skipped. Outage-shaped kinds never spend that budget.
+   */
+  const handleFailure = (
+    job: ScrapedJob,
+    stage: TransientStage,
+    error: unknown,
+    location = '未知',
+    score = 0,
+  ): void => {
+    if (classifyFailure(error) === 'permanent') {
+      const reason = error instanceof Error ? error.message : String(error);
+      record(job, 'skipped', reason, location, score);
+      return;
+    }
+    recordTransient(job, stage, error);
+  };
+
   const waitForCapacity = async (): Promise<void> => {
     if (!producerPaused && (
       !pipeline.canAcceptMore(runtimePipelineConfig.maxInFlightJobs) ||
@@ -194,10 +347,14 @@ export async function main(runMode: RunMode = resolveRunMode()) {
 
   const enqueueApply = (platform: JobPlatform, job: ScrapedJob, location: string, score: number, reason: string, coverLetter: string): void => {
     void applyQueue.add(async () => {
+      // Higher-scoring jobs jump the queue, so hitting the apply limit drops the
+      // weakest candidates rather than the slowest-to-evaluate ones.
       try {
         if (pipelineStopped) return;
         if (reachedRunLimit()) {
-          record(job, 'skipped', isDryRun ? 'Dry-run 表單檢查上限已達成' : '本次投遞上限已達成，未執行實體投遞', location, score);
+          // D-04: "not this round" is not "not worth applying to". Persisting a
+          // skipped row here locked AI-approved jobs out for 14 days.
+          console.log(`[名額已滿] ${job.jobId} ${job.title}：本輪上限已達成，未寫入紀錄，下輪重新處理。`);
           return;
         }
 
@@ -216,13 +373,16 @@ export async function main(runMode: RunMode = resolveRunMode()) {
         }
 
         if (!action.submitted) {
-          record(job, 'failed', `投遞失敗: 流程未確認完成\n原分析理由: ${reason}`, location, score);
+          recordTransient(job, 'apply', new Error('投遞表單控制項不可用，未送出。'));
           return;
         }
 
         const applied = record(job, 'applied', reason, location, score, coverLetter);
         appliedCount++;
+        transientLog.clear(job.jobId);
+        watchdog.tick();
         console.log(`[應徵成功] 已投遞第 ${appliedCount} 個職缺：「${job.title}」 - ${job.company}`);
+        logEvent('apply_success', { jobId: job.jobId, score, company: job.company, nth: appliedCount });
         try {
           await saveToNotion(applied);
         } catch (error) {
@@ -233,17 +393,15 @@ export async function main(runMode: RunMode = resolveRunMode()) {
         console.log(`等待投遞後操作間隔，延遲 ${delay / 1000} 秒...`);
         await sleep(delay);
       } catch (error: any) {
+        handleFailure(job, 'apply', error, location, score);
         if (error instanceof PlatformAccessError) {
-          record(job, 'failed', `投遞中停止：${error.message}`, location, score);
           await stopForPlatformAccess(platform, job, error.message);
-        } else {
-          console.error(`投遞過程發生例外 (${job.jobId}):`, error);
-          record(job, 'failed', `投遞例外: ${error instanceof Error ? error.message : String(error)}`, location, score);
         }
       } finally {
         pipeline.finish(job.jobId);
       }
-    }).catch(error => console.error(`Apply queue task 未處理錯誤 (${job.jobId}):`, error));
+    }, { priority: applyPriorityForScore(score) })
+      .catch(error => console.error(`Apply queue task 未處理錯誤 (${job.jobId}):`, error));
   };
 
   const enqueueLlm = (platform: JobPlatform, job: ScrapedJob, jdText: string, location: string): void => {
@@ -254,6 +412,7 @@ export async function main(runMode: RunMode = resolveRunMode()) {
         if (pipelineStopped || reachedRunLimit()) return;
         const aiService = LLMFactory.getProvider();
         const evaluation = await aiService.evaluateJob(job.title, job.company, jdText);
+        rateLimitCircuit.recordSuccess();
         const formattedReason = evaluation.reason.replace(/(\d+\.\s)/g, '\n$1').trim();
         console.log(`[AI] ${job.title}: ${evaluation.score} 分 (${evaluation.decision || 'N/A'})`);
 
@@ -262,11 +421,15 @@ export async function main(runMode: RunMode = resolveRunMode()) {
             ? `分數 (${evaluation.score}) 未達門檻 (${config.scoreThreshold})\n${formattedReason}`
             : `必備條件嚴重缺失 (${evaluation.decision || 'N/A'})\n${formattedReason}`;
           record(job, 'skipped', reason, location, evaluation.score);
+          logEvent('ai_reject', { jobId: job.jobId, score: evaluation.score, decision: evaluation.decision ?? 'n/a' });
+          watchdog.tick();
           return;
         }
 
         if (!pipeline.reserveApply(job.jobId, completedActionCount(), runLimit)) {
-          record(job, 'skipped', isDryRun ? 'Dry-run 唯一表單檢查名額已保留給先完成評估的職缺' : '本次投遞名額已保留給先完成評估的職缺', location, evaluation.score);
+          // D-04: these are the highest-scoring candidates. Persisting them as
+          // skipped locked them out for 14 days and wasted the LLM call.
+          console.log(`[名額已保留] ${job.jobId} ${job.title} (${evaluation.score} 分)：未寫入紀錄，下輪重新處理。`);
           return;
         }
         slotReserved = true;
@@ -277,8 +440,15 @@ export async function main(runMode: RunMode = resolveRunMode()) {
         enqueueApply(platform, job, location, evaluation.score, formattedReason, coverLetter);
         handedToApply = true;
       } catch (error) {
-        console.error(`AI 處理失敗 (${job.jobId}):`, error);
-        record(job, 'failed', `AI 評估／自薦信生成失敗: ${error instanceof Error ? error.message : String(error)}`, location);
+        // Arm the circuit before anything that can touch disk: handleFailure now
+        // writes a record when a budget is spent, and an ENOSPC there used to
+        // escape this handler and leave the 429 breaker permanently unarmed.
+        rateLimitCircuit.recordFailure(error);
+        // 31 jobs were lost forever to plain 429s under the old `failed` row.
+        handleFailure(job, 'llm', error, location);
+        if (rateLimitCircuit.shouldStop) {
+          await stopForRateLimit(rateLimitCircuit.consecutiveCount);
+        }
       } finally {
         if (slotReserved && !handedToApply) pipeline.releaseApply(job.jobId);
         if (!handedToApply) pipeline.finish(job.jobId);
@@ -296,17 +466,13 @@ export async function main(runMode: RunMode = resolveRunMode()) {
         const jdData = await platform.getJobDescription(detailPage, job.url);
         if (!passesSalaryFilter(jdData.jdText, expectedSalary, acceptNegotiable)) {
           record(job, 'skipped', '未達期望薪資', jdData.location);
+          watchdog.tick();
           return;
         }
         enqueueLlm(platform, job, jdData.jdText, jdData.location);
         handedToLlm = true;
       } catch (error) {
-        console.error(`擷取 JD 失敗 (${job.jobId}):`, error);
-        if (error instanceof ApplicationFormError && error.code === 'JOB_UNAVAILABLE') {
-          record(job, 'skipped', error.message);
-        } else {
-          record(job, 'failed', `JD 擷取失敗: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        handleFailure(job, 'jd', error);
         if (error instanceof PlatformAccessError) {
           await stopForPlatformAccess(platform, job, error.message);
         }
@@ -317,10 +483,24 @@ export async function main(runMode: RunMode = resolveRunMode()) {
     }).catch(error => console.error(`JD queue task 未處理錯誤 (${job.jobId}):`, error));
   };
 
+  watchdog.start();
+  logEvent('run_start', { mode: runMode, runLimit, threshold: config.scoreThreshold, keywords: searchKeywords.length });
+
   try {
     for (const platform of platforms) {
-      if (!await platform.verifyLogin()) {
-        throw new Error(`${platform.platformName} 無法驗證登入或平台存取狀態；請查看上方 [104 diagnostic] 後再決定是否執行 npm run login。`);
+      const gate = decideRunGate({
+        loginOk: await platform.verifyLogin(),
+        platformName: platform.platformName,
+      });
+      if (!gate.shouldRun) {
+        // An unattended VM has to be told, and the process has to exit non-zero.
+        // This path used to log and fall through to a silent exit 0.
+        console.error(gate.notice);
+        logEvent('run_gate_blocked', { platform: platform.platformName, reason: 'session_invalid' });
+        process.exitCode = gate.exitCode;
+        if (!isDryRun && gate.notice) await sendTelegramMessage(gate.notice);
+        pipelineStopped = true;
+        break;
       }
       console.log(`[驗證成功] ${platform.platformName} 登入 Session 有效。`);
 
@@ -389,41 +569,59 @@ export async function main(runMode: RunMode = resolveRunMode()) {
     await jdQueue.onIdle();
     await llmQueue.onIdle();
     await applyQueue.onIdle();
+    watchdog.stop();
     for (const platform of platforms) await platform.closeBrowsers();
   }
 
   const appliedJobs = processedInThisRun.filter(job => job.status === 'applied');
-  const failedJobs = processedInThisRun.filter(job => job.status === 'failed');
   const skippedJobs = processedInThisRun.filter(job => job.status === 'skipped');
+  // No path writes a `failed` row any more: permanent failures land as skipped,
+  // transient ones stay out of the database entirely.
+  const transientTotal = Object.values(transientCounts).reduce((sum, count) => sum + count, 0);
+  const transientBreakdown = Object.entries(transientCounts)
+    .map(([kind, count]) => `${kind}=${count}`)
+    .join(' ') || '無';
+
   if (isDryRun) {
     const readyForReview = preflightResults.filter(item => item.result.status === 'ready_for_review');
-    console.log(`Dry-run 完成：候選 ${dryRunCandidateCount}，已檢查 ${preflightResults.length} 個表單，送出前可審核 ${readyForReview.length} 個，流程失敗 ${failedJobs.length}，略過 ${skippedJobs.length}，正式投遞 0 個。`);
+    console.log(`Dry-run 完成：候選 ${dryRunCandidateCount}，已檢查 ${preflightResults.length} 個表單，送出前可審核 ${readyForReview.length} 個，未完成評估 ${transientTotal}，略過 ${skippedJobs.length}，正式投遞 0 個。`);
     for (const item of preflightResults) {
       console.log(`[Dry-run 結果] ${item.job.jobId} | ${item.result.status} | score=${item.score}`);
     }
   } else {
-    console.log(`任務完成：成功 ${appliedJobs.length}，失敗 ${failedJobs.length}，略過 ${skippedJobs.length}。`);
+    console.log(`任務完成：成功 ${appliedJobs.length}，略過 ${skippedJobs.length}，未完成評估 ${transientTotal}。`);
   }
+  console.log(`未完成評估分類：${transientBreakdown}${transientTotal > 0 ? '（未寫入紀錄，下輪會重試）' : ''}`);
+  if (watchdog.stalled) console.warn('本輪因進度停滯被 watchdog 中止。');
+  logEvent('run_end', {
+    mode: runMode,
+    applied: appliedJobs.length,
+    skipped: skippedJobs.length,
+    transient: transientTotal,
+    processed: processedCount,
+    elapsedMs: Date.now() - startedAt,
+    stalled: watchdog.stalled,
+  });
 
-  if (!isDryRun && (appliedJobs.length > 0 || failedJobs.length > 0)) {
-    let report = `<b>📊 本次投遞報告</b>\n\n`;
-
-    if (appliedJobs.length > 0) {
-      report += `<b>✅ 成功投遞 (${appliedJobs.length})</b>\n`;
-      appliedJobs.forEach(j => {
-        report += `• <b>${j.title}</b> (${j.company})\n  地點: ${j.location}\n  AI 評分: ${j.score} 分\n  <a href="${j.url}">🔗 點此查看</a>\n\n`;
-      });
-    }
-
-    if (failedJobs.length > 0) {
-      report += `<b>❌ 投遞失敗 (${failedJobs.length})</b>\n`;
-      failedJobs.forEach(j => {
-        report += `• <b>${j.title}</b> (${j.company})\n  <a href="${j.url}">🔗 點此查看</a>\n\n`;
-      });
-    }
-
-    report += `<i>總結: 處理 ${processedInThisRun.length} 筆，略過 ${skippedJobs.length} 筆。</i>`;
-    await sendTelegramMessage(report);
+  // Sent unconditionally. On an unattended VM, "applied 0 jobs" is itself the
+  // signal worth having — silence cannot be told apart from a dead session.
+  if (!isDryRun) {
+    const summaryStats: RunSummaryStats = {
+      mode: 'live',
+      elapsedMs: Date.now() - startedAt,
+      processedCount,
+      applied: appliedJobs.map(job => ({
+        title: job.title,
+        company: job.company,
+        location: job.location,
+        score: job.score,
+        url: job.url,
+      })),
+      skippedCount: skippedJobs.length,
+      transientCounts,
+      stalled: watchdog.stalled,
+    };
+    await sendTelegramMessage(buildRunSummary(summaryStats));
   }
 }
 

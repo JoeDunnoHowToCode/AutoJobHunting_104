@@ -8,7 +8,7 @@
 
 ## 🛠️ 核心特色與技術架構
 
-* **高效率尋缺引擎**：依職缺相關性 (`order=12`) 進行精準排序，避開廠商每日刷新日期的搜尋干擾，高效搜尋關鍵字契合度最高的新職缺。
+* **多樣化尋缺引擎**：每個關鍵字隨機選用一種排序（最新更新 / 推薦符合度 / 相關度 / 應徵人數少），限定 30 天內的職缺，並以 1～3 頁的隨機跨度推進頁碼，避免每次執行都掃到同一批結果。
 * **智慧關鍵字輪替**：從履歷提取期望職稱隨機搜尋，搜尋至第 2 頁且連續遇到 25 個已處理職缺時，自動切換至下一個關鍵字。
 * **多平台 AI 支援與 BYOK (Bring Your Own Key)**：支援 **Gemini, OpenAI (GPT-4o/DeepSeek), OpenRouter, Ollama (本地免金鑰)** 多種 LLM 引擎。金鑰安全留存於 `.env`，設定檔 `settings.json` 提供單一 `aiModel` 通用變數，輕鬆彈性切換模型！
 * **AI 智慧評估與 Zod 驗證**：透過 Zod Schema 進行加權評估（技能、經驗、領域、學歷、加分），產出決策 (APPLY/MAYBE/SKIP)、信心度、優勢亮點與缺口補強。搭載 Prompt Injection 防範機制，並支援薪資區間上限精準解析。
@@ -17,6 +17,9 @@
     * 投遞進度與 AI 評估分數即時推播至 **Telegram**。
     * 歷史紀錄完整歸檔至 **Notion Database**。
 * **智慧持久化去重 (14天過期機制)**：`applyRecord.json` 確保已投遞職缺不再重複投遞。因門檻未達略過 (`skipped`) 的職缺，14 天後自動解鎖重新評估。
+* **失敗分流**：只有「已應徵」「職缺已關閉」這類確定結果才寫入紀錄。429 額度耗盡、網路瞬斷、送出後無法確認等暫時性失敗一律**不寫入**，只記到 `logs/transient.jsonl`，下次執行會重新評估——避免一次配額耗盡就永久失去一批職缺。
+* **以平台狀態確認投遞結果**：送出後若成功提示未出現，會重新讀取 104 應徵按鈕的狀態文字（「近期已應徵」等）來確認，而不是靠逾時猜測；點擊前也會先讀一次，避免對已應徵職缺重複送出。
+* **每輪必發摘要**：不論有無投遞都會推播 Telegram（含「投遞 0 筆」），並在 Session 失效時明確告警且以非零 exit code 結束——排程執行時的靜默失敗是最貴的失敗。
 * **微服務外掛架構**：程式已重構為模組化架構（`src/platforms/` 與 `src/ai/`），只需擴充模組即可輕易支援各種新求職網站與 LLM 模型！
 
 ---
@@ -171,14 +174,31 @@ npm run diagnose-104:job -- 8x8yl
 
 ### 1. 離線單元測試 (Unit Tests - 快速且無需 API / 網路)
 
-| 測試指令 | 測試目標與驗證項目 |
+以 [vitest](https://vitest.dev/) 執行，一條指令跑完全部（約 0.5 秒）：
+
+```bash
+npm test              # 全部離線測試
+npm run test:watch    # 監看模式
+npm test -- tests/db.spec.ts   # 只跑單一檔案
+```
+
+| Spec | 測試目標與驗證項目 |
 | :--- | :--- |
-| `npm run test-prompts` (或 `npm test -- tests/prompts.spec.ts`) | **自薦信雙軌動態路由與 Guardrails 測試**：驗證 `apply` (Plan 1 - STAR 量化型)、`maybe` (Plan 2 - 特質遷移型)、`skip` 阻斷防護、Context 注入與 5 大硬性防護規則。 |
-| `npm run test-pipeline` | **Pipeline 滑動窗口與佇列控制**：驗證 DB O(1) 索引去重、`PipelineState` 併發鎖與 `reserveApply` 名額保留、`applyQueue` 嚴格單線、以及 LLM 暫時性錯誤指數退避重試。 |
-| `npm run test-application-action` | **應徵分流與唯讀隔離**：驗證 `--dry-run` 唯讀模式與 `live` 正式模式的 API 邊界隔離，確保 dry-run 絕不呼叫正式送出方法且不寫入 DB。 |
-| `npm run test-session-state` | **Session 快照與 Cookie 最小化**：驗證僅保存 104 官方主網域與登入子網域之憑證，嚴格過濾第三方追蹤與偽冒網域。 |
-| `npm run test-preflight-104` | **單筆 Preflight 安全邊界**：驗證表單預檢必須傳入明確 Job ID，且全程不讀取履歷、不呼叫 LLM、不寫入 DB。 |
-| `npm run test-104-platform` | **104 平台解析器**：驗證 104 職缺搜尋、詳情頁 JD 擷取與表單狀態解析邏輯。 |
+| `tests/db.spec.ts` | **去重狀態機**：`applied` 永久鎖、`skipped` 14 天到期、**`failed` 不參與去重**（避免一次 429 就永久失去職缺）、唯讀模式拒絕寫入。 |
+| `tests/failure-policy.spec.ts` | **失敗分流**：429 / 網路 / schema / 表單不可用 / 送出未確認 → transient；已應徵 / 職缺關閉 → permanent；未知錯誤保守歸 transient。 |
+| `tests/applied-state.spec.ts` | **應徵按鈕狀態比對**：正確辨識「近期已應徵」等變體，且不得把「我要應徵」「應徵已額滿」「尚未應徵」誤判為已應徵。 |
+| `tests/transient-log.spec.ts` | **暫時性失敗日誌**：append 不覆寫、自動建目錄、reason 含換行不破壞 JSONL、寫入失敗不中斷主流程。 |
+| `tests/watchdog.spec.ts` | **進度看門狗**：停滯門檻觸發一次、`tick()` 重置、`stop()` 後不再觸發（以假時鐘驗證）。 |
+| `tests/run-summary.spec.ts` | **每輪摘要**：0 投遞仍產出摘要、transient 分類統計、Telegram HTML 特殊字元轉義。 |
+| `tests/run-gate.spec.ts` | **執行閘門**：Session 失效必須阻止執行、`exitCode` 為 1、告警含 VNC 修復指示。 |
+| `tests/prompts.spec.ts` | **自薦信雙軌動態路由與 Guardrails**：`apply` (Plan 1 - STAR 量化型)、`maybe` (Plan 2 - 特質遷移型)、`skip` 阻斷防護、Context 注入與 5 大硬性防護規則。 |
+| `tests/pipeline.spec.ts` | **Pipeline 滑動窗口與佇列控制**：DB O(1) 索引去重、`PipelineState` 併發鎖與 `reserveApply` 名額保留、`applyQueue` 嚴格單線、LLM 暫時性錯誤指數退避重試。 |
+| `tests/application-action.spec.ts` | **應徵分流與唯讀隔離**：`--dry-run` 與 `live` 的 API 邊界隔離，確保 dry-run 絕不呼叫正式送出方法且不寫入 DB。 |
+| `tests/session-state.spec.ts` | **Session 快照與 Cookie 最小化**：僅保存 104 官方主網域與登入子網域之憑證，嚴格過濾第三方追蹤與偽冒網域。 |
+| `tests/preflight-104.spec.ts` | **單筆 Preflight 安全邊界**：表單預檢必須傳入明確 Job ID，且全程不讀取履歷、不呼叫 LLM、不寫入 DB。 |
+| `tests/platform104.spec.ts` | **104 導覽分類與 Context 隔離**：403 / 429 / 401 / 5xx 的 fail-closed 分類，以及應徵走 Persistent Context、搜尋走 Unauth Context 的結構不變式。 |
+
+需要真實瀏覽器或付費 API 的測試不在 `npm test` 範圍內，以獨立指令執行：`npm run test:browser`、`npm run test:ai`。
 
 ### 2. 線上冒煙與自薦信生成測試 (Online AI Tests)
 
