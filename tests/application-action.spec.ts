@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Page } from 'playwright';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   executeApplicationAction,
   getRuntimePipelineLimits,
@@ -13,20 +14,6 @@ import {
   JobPlatform,
   ScrapedJob,
 } from '../src/platforms/base';
-
-function assert(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(message);
-}
-
-function expectThrows(action: () => void, message: string): void {
-  let threw = false;
-  try {
-    action();
-  } catch {
-    threw = true;
-  }
-  assert(threw, message);
-}
 
 class FakePlatform extends JobPlatform {
   public readonly platformName = 'fake';
@@ -52,10 +39,7 @@ class FakePlatform extends JobPlatform {
   ): Promise<ApplicationPreflightResult> {
     this.preflightCalls++;
     this.pauseBeforeClose = options?.pauseBeforeClose ?? false;
-    return {
-      status: 'ready_for_review',
-      message: 'test preflight',
-    };
+    return { status: 'ready_for_review', message: 'test preflight' };
   }
 
   public async applyToJob(_jobId: string, _coverLetter: string): Promise<boolean> {
@@ -64,53 +48,110 @@ class FakePlatform extends JobPlatform {
   }
 }
 
-async function run(): Promise<void> {
-  console.log('[1/6] --dry-run 只解析為明確唯讀模式');
-  assert(resolveRunMode(['node', 'index.ts', '--dry-run']) === 'dry-run', '--dry-run 必須啟用唯讀模式');
-  assert(resolveRunMode(['node', 'index.ts']) === 'live', '未指定旗標時必須維持既有 live 行為');
+const liveLimits = {
+  jdConcurrency: 3,
+  aiConcurrency: 4,
+  maxApplyQueueSize: 5,
+  resumeApplyQueueSize: 2,
+  maxInFlightJobs: 8,
+};
 
-  console.log('[2/6] dry-run 僅允許單一、序列候選處理');
-  const liveLimits = {
-    jdConcurrency: 3,
-    aiConcurrency: 4,
-    maxApplyQueueSize: 5,
-    resumeApplyQueueSize: 2,
-    maxInFlightJobs: 8,
-  };
-  const dryRunLimits = getRuntimePipelineLimits('dry-run', liveLimits);
-  assert(dryRunLimits.jdConcurrency === 1, 'dry-run JD 必須單線');
-  assert(dryRunLimits.aiConcurrency === 1, 'dry-run AI 必須單線');
-  assert(dryRunLimits.maxApplyQueueSize === 1, 'dry-run Apply queue 只能保留一筆');
-  assert(dryRunLimits.resumeApplyQueueSize === 0, 'dry-run 不得在未清空時恢復 Producer');
-  assert(dryRunLimits.maxInFlightJobs === 1, 'dry-run 只能有一個 in-flight 候選');
-  assert(getRuntimePipelineLimits('live', liveLimits) === liveLimits, 'live 模式必須保留既有 pipeline 限制');
-
-  console.log('[3/6] dry-run 不得呼叫正式送出 API');
-  const dryRunPlatform = new FakePlatform();
-  const preview = await executeApplicationAction('dry-run', dryRunPlatform, 'job-1', 'private cover letter', {
-    preflight: { pauseBeforeClose: true },
+describe('resolveRunMode', () => {
+  it('--dry-run 必須啟用唯讀模式', () => {
+    expect(resolveRunMode(['node', 'index.ts', '--dry-run'])).toBe('dry-run');
   });
-  assert(preview.type === 'preflight', 'dry-run 應回傳 preflight 結果');
-  assert(dryRunPlatform.preflightCalls === 1, 'dry-run 必須呼叫 preflightApplication 一次');
-  assert(dryRunPlatform.submissionCalls === 0, 'dry-run 絕不可呼叫 applyToJob');
-  assert(dryRunPlatform.pauseBeforeClose, 'dry-run 必須將人工檢查暫停選項傳遞給 preflight');
 
-  console.log('[4/6] live 模式才可呼叫正式送出 API');
-  const livePlatform = new FakePlatform();
-  const submission = await executeApplicationAction('live', livePlatform, 'job-1', 'cover letter');
-  assert(submission.type === 'submission' && submission.submitted, 'live 模式應回傳正式送出結果');
-  assert(livePlatform.preflightCalls === 0, 'live 模式不應走 preflight API');
-  assert(livePlatform.submissionCalls === 1, 'live 模式必須呼叫 applyToJob 一次');
+  it('未指定旗標時必須維持既有 live 行為', () => {
+    expect(resolveRunMode(['node', 'index.ts'])).toBe('live');
+  });
+});
 
-  console.log('[5/6] 唯讀資料庫不得建立或改寫 applyRecord');
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autojob-dry-run-'));
-  const databasePath = path.join(directory, 'applyRecord.json');
-  try {
+describe('getRuntimePipelineLimits', () => {
+  it('dry-run 只允許單一、序列候選處理', () => {
+    expect(getRuntimePipelineLimits('dry-run', liveLimits)).toEqual({
+      jdConcurrency: 1,
+      aiConcurrency: 1,
+      maxApplyQueueSize: 1,
+      resumeApplyQueueSize: 0,
+      maxInFlightJobs: 1,
+    });
+  });
+
+  it('live 模式未指定 applyLimit 時原封保留既有限制', () => {
+    expect(getRuntimePipelineLimits('live', liveLimits)).toBe(liveLimits);
+  });
+
+  it('live 模式以 applyLimit 收斂佇列與 in-flight 上限', () => {
+    expect(getRuntimePipelineLimits('live', liveLimits, 1)).toEqual({
+      ...liveLimits,
+      maxApplyQueueSize: 1,
+      resumeApplyQueueSize: 0,
+      maxInFlightJobs: 2,
+    });
+  });
+});
+
+describe('executeApplicationAction 模式隔離', () => {
+  it('dry-run 走 preflight 且絕不呼叫 applyToJob', async () => {
+    const platform = new FakePlatform();
+    const preview = await executeApplicationAction('dry-run', platform, 'job-1', 'private cover letter', {
+      preflight: { pauseBeforeClose: true },
+    });
+
+    expect(preview.type).toBe('preflight');
+    expect(platform.preflightCalls).toBe(1);
+    expect(platform.submissionCalls).toBe(0);
+  });
+
+  it('dry-run 必須把人工檢查暫停選項傳遞給 preflight', async () => {
+    const platform = new FakePlatform();
+    await executeApplicationAction('dry-run', platform, 'job-1', 'cover', {
+      preflight: { pauseBeforeClose: true },
+    });
+    expect(platform.pauseBeforeClose).toBe(true);
+  });
+
+  it('live 模式走正式送出且不觸碰 preflight', async () => {
+    const platform = new FakePlatform();
+    const submission = await executeApplicationAction('live', platform, 'job-1', 'cover letter');
+
+    expect(submission).toEqual({ type: 'submission', submitted: true });
+    expect(platform.preflightCalls).toBe(0);
+    expect(platform.submissionCalls).toBe(1);
+  });
+});
+
+describe('唯讀資料庫不得建立或改寫 applyRecord', () => {
+  let directory: string;
+  let databasePath: string;
+
+  beforeEach(() => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autojob-dry-run-'));
+    databasePath = path.join(directory, 'applyRecord.json');
+  });
+
+  afterEach(() => {
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('檔案不存在時不得建立檔案', () => {
+    new JobDatabase(databasePath, { readOnly: true });
+    expect(fs.existsSync(databasePath)).toBe(false);
+  });
+
+  it('空的唯讀資料庫仍可供去重查詢', () => {
     const database = new JobDatabase(databasePath, { readOnly: true });
-    assert(!fs.existsSync(databasePath), '唯讀資料庫在檔案不存在時不得建立檔案');
-    assert(!database.hasBeenProcessed('new-job'), '空的唯讀資料庫應可供去重查詢');
-    expectThrows(() => database.getNextApplyId(), '唯讀資料庫不得配置 applyId');
-    expectThrows(() => {
+    expect(database.hasBeenProcessed('new-job')).toBe(false);
+  });
+
+  it('不得配置 applyId', () => {
+    const database = new JobDatabase(databasePath, { readOnly: true });
+    expect(() => database.getNextApplyId()).toThrow(/read-only/);
+  });
+
+  it('必須拒絕 addRecord', () => {
+    const database = new JobDatabase(databasePath, { readOnly: true });
+    expect(() =>
       database.addRecord({
         jobId: 'new-job',
         title: 'Test job',
@@ -120,29 +161,43 @@ async function run(): Promise<void> {
         score: 0,
         reason: 'test',
         status: 'skipped',
-        processedAt: '12:00:00',
-      });
-    }, '唯讀資料庫必須拒絕 addRecord');
-  } finally {
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
+        processedAt: '2026-08-26T12:00:00',
+      }),
+    ).toThrow(/read-only/);
+  });
+});
 
-  console.log('[6/6] 104 preflight 方法不得修改或送出表單');
-  const platformSource = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'platforms', 'platform104.ts'), 'utf8');
+// These guard the structural safety property that a preview path cannot reach
+// form mutation, even through a future refactor. They read source text because
+// the property is about which code exists, not about runtime behaviour.
+describe('104 preflight 原始碼不變式', () => {
+  const platformSource = fs.readFileSync(
+    path.resolve(__dirname, '..', 'src', 'platforms', 'platform104.ts'),
+    'utf8',
+  );
   const preflightStart = platformSource.indexOf('public async preflightApplication');
   const liveSubmitStart = platformSource.indexOf('public async applyToJob');
-  assert(preflightStart >= 0 && liveSubmitStart > preflightStart, '找不到預期的 preflight / live 方法邊界');
   const preflightSource = platformSource.slice(preflightStart, liveSubmitStart);
   const readOnlyPathSource = platformSource.slice(0, liveSubmitStart);
-  assert(!/\.fill\(/.test(preflightSource), 'preflight 不得填寫表單欄位');
-  assert(!/\.check\(/.test(preflightSource), 'preflight 不得勾選表單選項');
-  assert(!/\.click\(/.test(preflightSource), 'preflight 不得點擊任何表單控制項');
-  assert(!/\.fill\(/.test(readOnlyPathSource), '正式送出 API 之前的任何 helper 都不得填寫欄位');
-  assert(!/\.check\(/.test(readOnlyPathSource), '正式送出 API 之前的任何 helper 都不得勾選選項');
-  assert(!/submitButton\.click\(/.test(readOnlyPathSource), '正式送出 API 之前不得點擊最終送出按鈕');
-}
 
-run().catch(error => {
-  console.error(error);
-  process.exitCode = 1;
+  it('找得到預期的 preflight / live 方法邊界', () => {
+    expect(preflightStart).toBeGreaterThanOrEqual(0);
+    expect(liveSubmitStart).toBeGreaterThan(preflightStart);
+  });
+
+  it.each([
+    ['填寫表單欄位', /\.fill\(/],
+    ['勾選表單選項', /\.check\(/],
+    ['點擊任何表單控制項', /\.click\(/],
+  ])('preflight 不得%s', (_label, pattern) => {
+    expect(preflightSource).not.toMatch(pattern);
+  });
+
+  it.each([
+    ['填寫欄位', /\.fill\(/],
+    ['勾選選項', /\.check\(/],
+    ['點擊最終送出按鈕', /submitButton\.click\(/],
+  ])('正式送出 API 之前的任何 helper 都不得%s', (_label, pattern) => {
+    expect(readOnlyPathSource).not.toMatch(pattern);
+  });
 });

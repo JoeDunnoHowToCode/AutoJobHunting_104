@@ -17,7 +17,11 @@ export interface Config {
   userDataDir: string;
   dbPath: string;
   applyLimitPerRun: number;
-  /** Used only by non-104 auxiliary tools; 104 browser workflows are always visible. */
+  /**
+   * Applies to every browser context, including both 104 contexts (see
+   * platforms/base.ts). On the scheduled VM this must be false: Chrome runs
+   * headful inside Xvfb, which is cleaner than --headless=new.
+   */
   headless: boolean;
   /** Use the installed stable Chrome by default; set AUTOJOB_BROWSER_CHANNEL=playwright only for local diagnostics. */
   browserChannel?: 'chrome';
@@ -83,7 +87,7 @@ export const config: Config = {
   resumePath: path.resolve(rootDir, 'resume.json'),
   authStatePath: path.resolve(rootDir, 'auth_state.json'),
   userDataDir: path.resolve(rootDir, '.chrome-profile'),
-  dbPath: path.resolve(rootDir, 'applyRecord.json'),
+  dbPath: path.resolve(rootDir, 'applyRecord.jsonl'),
   applyLimitPerRun: settings.applyLimitPerRun ?? 10,
   // Intended for one-off, visible manual validation without modifying a
   // user's ignored settings.json. This does not attempt to alter browser

@@ -1,5 +1,7 @@
 import { Locator, Page } from 'playwright';
 import * as readline from 'readline';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   ApplicationPreflightOptions,
   ApplicationPreflightResult,
@@ -7,6 +9,11 @@ import {
   ScrapedJob,
 } from './base';
 import { config } from '../config';
+import { matchAppliedButtonState } from './applied-state';
+import { CheckboxDetail, collectCheckboxDetails } from './checkbox-details';
+import { UnverifiedSubmissionError } from '../failure-policy';
+import { countCjkChars, fitCoverLetter } from '../text-utils';
+import { lintCoverLetter } from '../cover-letter-lint';
 
 export type PlatformAccessErrorCode = 'SESSION_EXPIRED' | 'PLATFORM_LIMITED' | 'PAGE_UNRECOGNIZED';
 export type PlatformRequestStage = 'login' | 'search' | 'job' | 'application';
@@ -132,6 +139,9 @@ const LIMIT_TEXT_MARKERS: Array<{ id: string; text: string; classification: Plat
   { id: 'access_denied', text: 'Access Denied', classification: 'http_forbidden' },
   { id: 'service_unavailable', text: '服務暫時無法使用', classification: 'service_unavailable' },
 ];
+/** Used when 104's textarea exposes no maxlength of its own. */
+const COVER_LETTER_FALLBACK_MAX_CHARS = 220;
+
 const JOB_UNAVAILABLE_TEXT_MARKERS = ['此職缺已關閉', '職缺已關閉', '已停止徵才', '找不到此職缺'];
 const ALREADY_APPLIED_TEXT_MARKERS = ['您已應徵此職缺', '已應徵此職缺', '您已投遞此職缺'];
 
@@ -325,6 +335,13 @@ export class Platform104 extends JobPlatform {
       }
     }
 
+    // Diagnostic only: what the boxes actually say, so a "form unavailable"
+    // failure stops being an unreadable dead end. The submit decision below is
+    // unchanged — nothing here checks a box.
+    const checkboxDetails: CheckboxDetail[] = await page
+      .evaluate(collectCheckboxDetails)
+      .catch(() => []);
+
     const textareaFound = textarea !== null;
     const submitButtonFound = submitButton !== null;
     const textareaVisible = textareaFound && await textarea!.isVisible().catch(() => false);
@@ -345,8 +362,27 @@ export class Platform104 extends JobPlatform {
         submitButtonEnabled,
         visibleCheckboxCount,
         uncheckedCheckboxCount,
+        checkboxDetails,
       },
     };
+  }
+
+  /**
+   * Saves the form as it stood when a submission failed. 36 apply-stage failures
+   * were unreviewable because the page was closed in `finally` with no trace.
+   * Best-effort: a failed screenshot must never mask the original error.
+   */
+  private async captureFailureArtifact(page: Page, jobId: string, label: string): Promise<void> {
+    try {
+      const directory = path.resolve(__dirname, '..', '..', 'artifacts');
+      fs.mkdirSync(directory, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const file = path.join(directory, `${jobId}-${label}-${stamp}.png`);
+      await page.screenshot({ path: file, fullPage: true });
+      console.log(`[artifact] 已保存失敗現場：${file}`);
+    } catch (error) {
+      console.warn(`[artifact] 保存失敗現場時出錯，已略過: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private async closeApplicationForm(session: ApplicationFormSession | null): Promise<void> {
@@ -398,6 +434,19 @@ export class Platform104 extends JobPlatform {
         throw new ApplicationFormError('FORM_UNAVAILABLE', '找不到「我要應徵」按鈕；可能是職缺狀態或頁面結構已變更。');
       }
 
+      // The CSS selectors match the button element regardless of its label, so
+      // an already-applied job would otherwise get clicked and land on 104's
+      // "apply again?" dialog — which has no textarea, and used to be recorded
+      // as a generic form failure. Read the label before touching it.
+      const applyButtonText = (await applyButton.innerText().catch(() => '')).trim();
+      console.log(`[104 apply-button] jobId=${jobId} text=${JSON.stringify(applyButtonText)}`);
+      if (matchAppliedButtonState(applyButtonText)) {
+        throw new ApplicationFormError(
+          'ALREADY_APPLIED',
+          `104 應徵按鈕顯示已投遞狀態：${JSON.stringify(applyButtonText)}`,
+        );
+      }
+
       const popupPromise = sourcePage.waitForEvent('popup', { timeout: 3000 }).catch(() => null);
       await applyButton.click();
       const popup = await popupPromise;
@@ -425,6 +474,30 @@ export class Platform104 extends JobPlatform {
     } catch (error) {
       await this.closeApplicationForm({ sourcePage, targetPage, popupOpened });
       throw error;
+    }
+  }
+
+  /**
+   * Reopens the public job page in the authenticated context and reports what
+   * the apply button now says. Used to settle a submission whose success text
+   * never appeared, instead of guessing from a timeout.
+   */
+  private async readAppliedStateFromJobPage(jobId: string): Promise<string | null> {
+    let page: Page | null = null;
+    try {
+      page = await this.getApplyPage();
+      await page.goto(`https://www.104.com.tw/job/${jobId}`, { waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(2000);
+      const button = await this.findFirstVisible(this.applyButtonCandidates(page));
+      if (!button) return null;
+      const text = (await button.innerText().catch(() => '')).trim();
+      console.log(`[104 apply-button recheck] jobId=${jobId} text=${JSON.stringify(text)}`);
+      return text;
+    } catch (error) {
+      console.error(`重新確認應徵狀態失敗 (${jobId}):`, error);
+      return null;
+    } finally {
+      if (page) await this.closePage(page);
     }
   }
 
@@ -692,18 +765,38 @@ export class Platform104 extends JobPlatform {
     }
   }
 
+  /**
+   * Records the shape of 104's submission requests so a future version can use
+   * the HTTP response as the primary success signal instead of page text
+   * (決議 #2). Passive: method, path and status only — never a body, never a
+   * query string, and it never blocks or alters the request.
+   */
+  private attachSubmissionRequestLogger(page: Page, jobId: string): void {
+    page.on('response', response => {
+      const request = response.request();
+      if (request.method() === 'GET') return;
+      console.log(
+        `[104 apply-xhr] jobId=${jobId} method=${request.method()} ` +
+        `path=${safePath(response.url())} status=${response.status()}`,
+      );
+    });
+  }
+
   public async applyToJob(jobId: string, coverLetter: string): Promise<boolean> {
     console.log(`Opening application page in authenticated context for jobId: ${jobId}...`);
     let session: ApplicationFormSession | null = null;
 
     try {
       session = await this.openApplicationForm(jobId);
+      this.attachSubmissionRequestLogger(session.targetPage, jobId);
+      if (session.popupOpened) this.attachSubmissionRequestLogger(session.sourcePage, jobId);
       const inspection = await this.inspectForm(session.targetPage);
 
       if (!inspection.textarea || !inspection.submitButton ||
           !inspection.result.textareaVisible || !inspection.result.textareaEnabled ||
           !inspection.result.submitButtonVisible || !inspection.result.submitButtonEnabled) {
         console.error('應徵表單缺少可用的自薦信欄位或最終送出按鈕。');
+        await this.captureFailureArtifact(session.targetPage, jobId, 'missing-controls');
         return false;
       }
 
@@ -711,13 +804,56 @@ export class Platform104 extends JobPlatform {
       // marketing consent or change resume visibility, so never force-check
       // them. A live run stops for review instead.
       if (inspection.result.uncheckedCheckboxCount > 0) {
-        console.error(`表單有 ${inspection.result.uncheckedCheckboxCount} 個未勾選選項；為避免變更同意或偏好設定，未自動送出。`);
-        return false;
+        // Behaviour unchanged: still refuses to submit. The labels are logged so
+        // the failure stops being an unreadable dead end (決議 #14).
+        const described = (inspection.result.checkboxDetails ?? [])
+          .map(box => `${box.checked ? '☑' : '☐'}${box.required ? '*' : ''} ${box.label || box.name || '(無標籤)'}`)
+          .join(' | ');
+        await this.captureFailureArtifact(session.targetPage, jobId, 'unchecked-boxes');
+        throw new ApplicationFormError(
+          'FORM_UNAVAILABLE',
+          `表單有 ${inspection.result.uncheckedCheckboxCount} 個未勾選選項，為避免變更同意或偏好設定未自動送出。選項：${described || '(無法讀取)'}`,
+        );
+      }
+
+      // 104's textarea may carry a maxlength, and pressSequentially silently
+      // drops the overflow. Trim on a sentence boundary first, then verify what
+      // actually landed in the field before clicking submit.
+      // maxlength is a UTF-16 code-unit budget; the prompt's limit is an
+      // ideograph budget. They are different units and both must hold.
+      const maxLengthAttribute = Number(inspection.result.textareaMaxLength);
+      const maxUnits = Number.isFinite(maxLengthAttribute) && maxLengthAttribute > 0
+        ? maxLengthAttribute
+        : undefined;
+      const trimmed = fitCoverLetter(coverLetter, {
+        maxUnits,
+        maxCjkChars: COVER_LETTER_FALLBACK_MAX_CHARS,
+      });
+      if (trimmed.length !== coverLetter.length) {
+        console.log(
+          `[自薦信裁切] maxlength=${maxUnits ?? '未提供'} 單位／${COVER_LETTER_FALLBACK_MAX_CHARS} 中文字上限；` +
+          `原 ${coverLetter.length} 單位 ${countCjkChars(coverLetter)} 字 → ` +
+          `裁後 ${trimmed.length} 單位 ${countCjkChars(trimmed)} 字。`,
+        );
+      }
+
+      const lint = lintCoverLetter(trimmed, { maxCjkChars: COVER_LETTER_FALLBACK_MAX_CHARS });
+      if (!lint.clean) {
+        console.warn(`[自薦信品質] ${lint.cjkChars} 字｜flags=${lint.flags.join(',')}｜禁用詞=${lint.bannedPhrases.join('、') || '無'}`);
       }
 
       console.log('Writing cover letter with human typing simulation...');
-      await humanType(inspection.textarea, coverLetter);
+      await humanType(inspection.textarea, trimmed);
       await session.targetPage.waitForTimeout(1000);
+
+      const written = await inspection.textarea.inputValue().catch(() => '');
+      if (written.trim() !== trimmed.trim()) {
+        await this.captureFailureArtifact(session.targetPage, jobId, 'truncated-letter');
+        throw new ApplicationFormError(
+          'FORM_UNAVAILABLE',
+          `自薦信寫入不完整，未送出。預期 ${trimmed.length} 字元、實際 ${written.length} 字元。`,
+        );
+      }
 
       console.log('Submitting application...');
       await inspection.submitButton.click();
@@ -730,10 +866,36 @@ export class Platform104 extends JobPlatform {
         await session.targetPage.getByText(successRegex).first().waitFor({ state: 'visible', timeout: 15000 });
         return true;
       } catch {
-        return false;
+        // The success text never showed. That is not evidence of failure — 104
+        // may just be slow. Ask the platform what it thinks the state is now.
+        console.warn(`成功提示未出現，改讀應徵按鈕狀態確認 (${jobId})...`);
+        await this.captureFailureArtifact(session.targetPage, jobId, 'no-success-text');
+        await this.closeApplicationForm(session);
+        session = null;
+
+        const buttonText = await this.readAppliedStateFromJobPage(jobId);
+        if (matchAppliedButtonState(buttonText)) {
+          console.log(`[應徵確認] 由按鈕狀態確認已送出：${JSON.stringify(buttonText)}`);
+          return true;
+        }
+        throw new UnverifiedSubmissionError(
+          buttonText === null
+            ? '送出後讀不到應徵按鈕，無法確認結果。'
+            : `送出後按鈕仍顯示 ${JSON.stringify(buttonText)}，無法確認結果。`,
+          buttonText ?? undefined,
+        );
       }
     } catch (err: any) {
-      if (err instanceof PlatformAccessError) throw err;
+      // Typed failures carry the information the caller needs to decide whether
+      // the job is settled or merely unevaluated. Only genuinely unknown errors
+      // collapse into a plain `false`.
+      if (
+        err instanceof PlatformAccessError ||
+        err instanceof ApplicationFormError ||
+        err instanceof UnverifiedSubmissionError
+      ) {
+        throw err;
+      }
       console.error('Error during job application:', err);
       return false;
     } finally {

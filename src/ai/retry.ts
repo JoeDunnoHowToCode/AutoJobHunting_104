@@ -1,14 +1,20 @@
+import { isRateLimitError, isTransientSignal } from '../failure-policy';
+
+/**
+ * The one rule where this layer legitimately differs from `classifyFailure`.
+ *
+ * A schema-validation failure is transient at the *run* level — the job stays a
+ * candidate and the model may produce valid output next time — but retrying it
+ * in-process just sends the same prompt three times and burns quota. Everything
+ * else about transience is shared, so the provider's commonest real error (a 429
+ * quota body with no `status` field) is recognised identically on both sides.
+ */
+const NOT_WORTH_IMMEDIATE_RETRY = /schema validation failed/i;
+
 function isRetryable(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const candidate = error as { status?: unknown; code?: unknown; message?: unknown; cause?: { code?: unknown } };
-  const status = Number(candidate.status ?? candidate.code);
-  if (status === 408 || status === 409 || status === 425 || status === 429 || status >= 500) return true;
-
-  const code = String(candidate.code ?? candidate.cause?.code ?? '').toUpperCase();
-  if (['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND'].includes(code)) return true;
-
-  const message = String(candidate.message ?? '');
-  return /network|fetch failed|timeout|temporarily unavailable|resource exhausted|rate limit/i.test(message);
+  const message = String((error as { message?: unknown } | null)?.message ?? '');
+  if (NOT_WORTH_IMMEDIATE_RETRY.test(message)) return false;
+  return isTransientSignal(error);
 }
 
 function sleep(milliseconds: number): Promise<void> {
@@ -29,11 +35,7 @@ export async function retryTransient<T>(
       lastError = error;
       if (!isRetryable(error) || attempt === maxAttempts) throw error;
 
-      const candidate = error as { status?: unknown; code?: unknown; message?: unknown };
-      const status = Number(candidate?.status ?? candidate?.code);
-      const message = String(candidate?.message ?? '');
-      const isRateLimit = status === 429 || /resource exhausted|rate limit/i.test(message);
-
+      const isRateLimit = isRateLimitError(error);
       const baseDelay = isRateLimit ? 12000 * attempt : 1000 * 2 ** (attempt - 1);
       const jitteredDelay = Math.round(baseDelay * (0.85 + Math.random() * 0.3));
       console.warn(`${context} ${isRateLimit ? '速率受限 (429)' : '暫時性失敗'}；${jitteredDelay}ms 後進行第 ${attempt + 1}/${maxAttempts} 次嘗試。`);

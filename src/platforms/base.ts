@@ -39,6 +39,8 @@ export interface ApplicationPreflightResult {
     submitButtonEnabled: boolean;
     visibleCheckboxCount: number;
     uncheckedCheckboxCount: number;
+    /** Diagnostic detail on each visible checkbox. Never acted upon. */
+    checkboxDetails?: Array<{ name: string; label: string; checked: boolean; required: boolean }>;
   };
 }
 

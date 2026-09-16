@@ -39,6 +39,14 @@ async function run(): Promise<void> {
         `submit=${result.form.submitButtonFound}/${result.form.submitButtonVisible}/${result.form.submitButtonEnabled} ` +
         `checkboxes=${result.form.visibleCheckboxCount} unchecked=${result.form.uncheckedCheckboxCount}`,
       );
+      // The cover-letter budget depends on this value, so print it explicitly.
+      console.log(`[104 preflight] textareaMaxLength=${result.form.textareaMaxLength ?? '未提供'}`);
+      for (const box of result.form.checkboxDetails ?? []) {
+        console.log(
+          `[104 preflight] checkbox ${box.checked ? '☑' : '☐'}${box.required ? ' required' : ''} ` +
+          `name=${JSON.stringify(box.name)} label=${JSON.stringify(box.label)}`,
+        );
+      }
     }
 
     if (result.status !== 'ready_for_review') {

@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import { config } from './config';
 
 export interface JobRecord {
@@ -15,49 +16,71 @@ export interface JobRecord {
   processedAt: string;
 }
 
-interface DailyRecords {
-  applied: JobRecord[];
-  skipped: JobRecord[];
-  failed: JobRecord[];
-}
-
-interface ApplyRecordData {
-  [date: string]: DailyRecords;
+/** One JSONL line: the record plus the date bucket it belongs to. */
+interface StoredRecord extends JobRecord {
+  date: string;
 }
 
 export interface JobDatabaseOptions {
   /**
    * Allows a run to use historical records for de-duplication without ever
-   * creating or modifying applyRecord.json. Used by the pre-submit dry-run.
+   * creating or modifying the store. Used by the pre-submit dry-run.
    */
   readOnly?: boolean;
 }
 
+/**
+ * Append-only record store.
+ *
+ * Every write is a single `appendFileSync` of one line. The previous design
+ * re-serialised the whole file on every record, which meant a crash mid-run
+ * lost the entire run's history — and losing history is what causes duplicate
+ * applications.
+ *
+ * Loading reads what survived rather than giving up: no de-duplication at all is
+ * precisely the state that produces duplicate applications. A corrupt line is
+ * skipped, counted in `corruptLineCount` (which the caller is expected to
+ * surface — see src/index.ts) and left on disk for inspection. Only a genuinely
+ * half-written trailing line is repaired, and never by rewriting the file.
+ */
 export class JobDatabase {
-  private data: ApplyRecordData = {};
-  private currentApplyId: number = 0;
+  public corruptLineCount = 0;
   private processedMap = new Map<string, { hasApplied: boolean; latestSkippedDate?: string }>();
-  private readonly dbPath: string;
+  private currentApplyId = 0;
+  private todayRecords: JobRecord[] = [];
+  private readonly storePath: string;
+  private readonly legacyPath: string;
   private readonly readOnly: boolean;
+  /** Where appends go. Differs from storePath only when storePath holds legacy JSON. */
+  private writePath: string;
 
-  constructor(dbPath: string = config.dbPath, options: JobDatabaseOptions = {}) {
-    this.dbPath = dbPath;
+  constructor(storePath: string = config.dbPath, options: JobDatabaseOptions = {}) {
+    this.storePath = storePath;
+    this.writePath = storePath;
+    this.legacyPath = storePath.replace(/\.jsonl$/, '.json');
     this.readOnly = options.readOnly ?? false;
     this.load();
   }
 
-  private rebuildIndex(): void {
-    this.processedMap.clear();
-    for (const date in this.data) {
-      for (const status of ['applied', 'skipped', 'failed'] as const) {
-        for (const record of this.data[date][status]) {
-          this.updateProcessedIndex(record, date);
-        }
-      }
-    }
+  private getTodayDateString(): string {
+    const now = new Date();
+    const tzOffset = now.getTimezoneOffset() * 60000;
+    return new Date(now.getTime() - tzOffset).toISOString().split('T')[0];
   }
 
-  private updateProcessedIndex(record: JobRecord, dateStr: string): void {
+  /**
+   * A `failed` record must not enter the index at all. It carries neither
+   * hasApplied nor latestSkippedDate, so an indexed entry would make
+   * hasBeenProcessed() fall through to its unconditional `return true` and
+   * exclude the job forever, with no expiry. That cost 56 jobs — 31 of them to
+   * nothing worse than a Gemini 429.
+   */
+  private index(record: JobRecord, dateStr: string): void {
+    if (record.applyId && record.applyId > this.currentApplyId) {
+      this.currentApplyId = record.applyId;
+    }
+    if (record.status === 'failed') return;
+
     const entry = this.processedMap.get(record.jobId) || { hasApplied: false };
     if (record.status === 'applied') {
       entry.hasApplied = true;
@@ -67,70 +90,177 @@ export class JobDatabase {
     this.processedMap.set(record.jobId, entry);
   }
 
-  private getTodayDateString(): string {
-    const now = new Date();
-    const tzOffset = now.getTimezoneOffset() * 60000;
-    const localTime = new Date(now.getTime() - tzOffset);
-    return localTime.toISOString().split('T')[0];
+  /** Flattens the legacy date-bucketed object into ordered StoredRecords. */
+  private readLegacyRecords(sourcePath: string = this.legacyPath): StoredRecord[] {
+    const parsed = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
+    const flattened: StoredRecord[] = [];
+
+    for (const date of Object.keys(parsed).sort()) {
+      const day = parsed[date];
+      if (!day || typeof day !== 'object') continue;
+      for (const status of ['applied', 'skipped', 'failed'] as const) {
+        for (const record of day[status] ?? []) {
+          flattened.push({ ...record, location: record.location || 'Unknown', date });
+        }
+      }
+    }
+    return flattened;
+  }
+
+  /** JSONL if the first non-empty line is an object carrying a jobId. */
+  private looksLikeJsonl(raw: string): boolean {
+    const firstLine = raw.split('\n').find(line => line.trim().length > 0);
+    if (!firstLine) return true;
+    try {
+      const parsed = JSON.parse(firstLine);
+      return Boolean(parsed) && typeof parsed === 'object' && 'jobId' in parsed;
+    } catch {
+      return false;
+    }
   }
 
   private load(): void {
     try {
-      if (fs.existsSync(this.dbPath)) {
-        const rawData = fs.readFileSync(this.dbPath, 'utf8');
-        const parsed = JSON.parse(rawData);
-        
-        // Check if it's the old flat format or the new date-based format
-        const keys = Object.keys(parsed);
-        let maxApplyId = 0;
-
-        if (keys.length > 0 && parsed[keys[0]].hasOwnProperty('jobId')) {
-           // It's the old flat format, migrate it
-           for (const key of keys) {
-             const record = parsed[key] as JobRecord;
-             const dateStr = record.processedAt ? record.processedAt.split('T')[0] : '2026-01-01';
-             if (!this.data[dateStr]) {
-               this.data[dateStr] = { applied: [], skipped: [], failed: [] };
-             }
-             if (!record.location) record.location = 'Unknown';
-             if (record.status === 'applied') {
-               maxApplyId++;
-               record.applyId = maxApplyId;
-             }
-             this.data[dateStr][record.status].push(record);
-           }
-           if (!this.readOnly) this.save();
-        } else {
-           this.data = parsed;
-           // Find max applyId
-           for (const date in this.data) {
-             for (const r of this.data[date].applied) {
-               if (r.applyId && r.applyId > maxApplyId) {
-                 maxApplyId = r.applyId;
-               }
-             }
-           }
+      if (fs.existsSync(this.storePath)) {
+        const raw = fs.readFileSync(this.storePath, 'utf8');
+        if (this.looksLikeJsonl(raw)) {
+          this.loadFromJsonl(raw);
+          return;
         }
-        this.currentApplyId = maxApplyId;
-      } else {
-        this.data = {};
-        if (!this.readOnly) this.save();
+
+        // The sniff only reads line 1, so a JSONL store whose first line is torn
+        // or carries a BOM also fails it. Confirm the legacy shape by actually
+        // parsing the file before committing to that path: letting the parse
+        // error escape used to throw out of the constructor and brick every
+        // subsequent run, before the watchdog or any operator notice could fire.
+        let legacyRecords: StoredRecord[];
+        try {
+          legacyRecords = this.readLegacyRecords(this.storePath);
+        } catch {
+          console.warn(
+            `[DB] ${path.basename(this.storePath)} 首行無法解析且不是舊格式，改以 JSONL 逐行讀取。`,
+          );
+          this.loadFromJsonl(raw);
+          return;
+        }
+
+        // The caller handed us the legacy date-bucketed file. Index it so
+        // de-duplication still works, but never append JSONL into it.
+        this.writePath = this.storePath.endsWith('.json')
+          ? `${this.storePath}l`
+          : `${this.storePath}.jsonl`;
+        console.warn(
+          `[DB] ${path.basename(this.storePath)} 是舊格式，僅供讀取；新紀錄將寫入 ${path.basename(this.writePath)}。`,
+        );
+        for (const record of legacyRecords) {
+          this.index(record, record.date);
+        }
+        if (fs.existsSync(this.writePath)) {
+          this.loadFromJsonl(fs.readFileSync(this.writePath, 'utf8'), this.writePath);
+        }
+        return;
       }
-      this.rebuildIndex();
+
+      if (fs.existsSync(this.legacyPath)) {
+        const legacy = this.readLegacyRecords();
+        for (const record of legacy) this.index(record, record.date);
+        // A dry-run must leave the filesystem untouched, so it keeps the legacy
+        // file as its source and simply skips the migration.
+        if (!this.readOnly) {
+          fs.mkdirSync(path.dirname(this.storePath), { recursive: true });
+          fs.writeFileSync(
+            this.storePath,
+            legacy.map(record => JSON.stringify(record)).join('\n') + (legacy.length > 0 ? '\n' : ''),
+            'utf8',
+          );
+          console.log(`[DB] 已從 ${path.basename(this.legacyPath)} 遷移 ${legacy.length} 筆紀錄至 JSONL。`);
+        }
+      }
     } catch (error) {
       console.error('Failed to load database. Halting to prevent data loss or silent error:', error);
       throw error;
     }
   }
 
-  private save(): void {
+  private loadFromJsonl(raw: string, sourcePath: string = this.storePath): void {
+    const lines = raw.split('\n');
+    const today = this.getTodayDateString();
+    // Byte offsets, not UTF-16 indices: the store is mostly CJK (3 bytes each)
+    // and the repair below hands this straight to fs.truncateSync.
+    let lastGoodByteEnd = 0;
+    let byteOffset = 0;
+
+    for (let position = 0; position < lines.length; position++) {
+      const rawLine = lines[position];
+      // Only the final element of a split lacks its terminating newline. Adding
+      // 1 unconditionally pushed lastGoodEnd one past the end of a file whose
+      // last record was complete but unterminated, which read as "not torn".
+      const terminated = position < lines.length - 1;
+      byteOffset += Buffer.byteLength(rawLine, 'utf8') + (terminated ? 1 : 0);
+
+      const line = rawLine.trim();
+      if (!line) {
+        if (terminated) lastGoodByteEnd = byteOffset;
+        continue;
+      }
+
+      let stored: StoredRecord;
+      try {
+        stored = JSON.parse(line);
+      } catch {
+        // Only the last line can legitimately be half-written (SIGKILL during
+        // append), and the repair below deals with it. Counting that as damage
+        // would raise a data-loss alarm on every ordinary interrupted run.
+        if (!terminated) {
+          console.warn('[DB] 最後一行不完整，已略過（上次執行可能被強制中斷）。');
+          continue;
+        }
+        this.corruptLineCount++;
+        console.error(`[DB] 第 ${position + 1} 行無法解析，已略過該筆紀錄。`);
+        continue;
+      }
+
+      lastGoodByteEnd = byteOffset;
+      this.index(stored, stored.date);
+      if (stored.date === today) this.todayRecords.push(stored);
+    }
+
+    if (this.corruptLineCount > 0) {
+      console.error(
+        `[DB] 共略過 ${this.corruptLineCount} 行損壞紀錄；去重可能不完整，請檢查 ${path.basename(sourcePath)}。`,
+      );
+    }
+
+    // A file that ends in a newline has no torn tail — whatever is damaged in it
+    // is complete, terminated data that stays on disk for inspection and cannot
+    // be welded into by the next append. Truncating it here destroyed recoverable
+    // records on a plain read, right after telling the operator to go inspect them.
+    if (raw.endsWith('\n') || raw.length === 0) return;
+
+    if (this.readOnly) return;
+
+    // Every record has already been indexed by this point, so a repair that
+    // cannot be written (read-only mount, EACCES) must not take the run down
+    // with it — the next append is what would suffer, and that will fail loudly.
     try {
-      const tmp = this.dbPath + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2), 'utf8');
-      fs.renameSync(tmp, this.dbPath);
+      const totalBytes = Buffer.byteLength(raw, 'utf8');
+      if (lastGoodByteEnd === totalBytes) {
+        // The record itself survived; only its terminating newline was lost. It
+        // is real data, so append the newline rather than dropping it.
+        fs.appendFileSync(sourcePath, '\n', 'utf8');
+        console.warn('[DB] 已補回上次中斷缺少的尾端換行。');
+        return;
+      }
+      // A genuinely half-written record. truncateSync drops exactly those bytes
+      // in one metadata operation; a read-modify-write of the whole file would
+      // open a window where a crash leaves the store empty, and would silently
+      // discard anything a concurrent run appended since this snapshot was read.
+      fs.truncateSync(sourcePath, lastGoodByteEnd);
+      console.warn('[DB] 已截斷上次中斷留下的殘缺尾行。');
     } catch (error) {
-      console.error('Failed to save database. Halting to prevent silent write error:', error);
-      throw error;
+      console.error(
+        `[DB] 無法修復殘缺尾行，紀錄已照常載入: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -148,8 +278,7 @@ export class JobDatabase {
     if (entry.hasApplied) return true;
     if (entry.latestSkippedDate) {
       const recordDate = new Date(entry.latestSkippedDate);
-      const now = new Date();
-      const daysSince = Math.floor((now.getTime() - recordDate.getTime()) / (1000 * 60 * 60 * 24));
+      const daysSince = Math.floor((Date.now() - recordDate.getTime()) / (1000 * 60 * 60 * 24));
       if (daysSince >= 14) return false;
     }
     return true;
@@ -160,24 +289,24 @@ export class JobDatabase {
       throw new Error('JobDatabase is read-only; dry-run records must not be persisted.');
     }
     const today = this.getTodayDateString();
-    if (!this.data[today]) {
-      this.data[today] = { applied: [], skipped: [], failed: [] };
-    }
-    
-    // Remove if it exists in failed from today
-    this.data[today].failed = this.data[today].failed.filter(r => r.jobId !== record.jobId);
-    
-    this.data[today][record.status].push(record);
-    this.updateProcessedIndex(record, today);
-    this.save();
+    const stored: StoredRecord = { ...record, date: today };
+
+    fs.mkdirSync(path.dirname(this.writePath), { recursive: true });
+    fs.appendFileSync(this.writePath, `${JSON.stringify(stored)}\n`, 'utf8');
+
+    this.index(record, today);
+    this.todayRecords.push(record);
   }
 
   public getAppliedJobsCount(): number {
     return this.currentApplyId;
   }
 
-  public getTodayRecords(): DailyRecords {
-    const today = this.getTodayDateString();
-    return this.data[today] || { applied: [], skipped: [], failed: [] };
+  public getTodayRecords(): { applied: JobRecord[]; skipped: JobRecord[]; failed: JobRecord[] } {
+    return {
+      applied: this.todayRecords.filter(record => record.status === 'applied'),
+      skipped: this.todayRecords.filter(record => record.status === 'skipped'),
+      failed: this.todayRecords.filter(record => record.status === 'failed'),
+    };
   }
 }
