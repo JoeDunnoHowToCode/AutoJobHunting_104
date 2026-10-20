@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JobDatabase, JobRecord } from '../src/db';
 
 function record(jobId: string, status: JobRecord['status']): JobRecord {
@@ -106,6 +106,39 @@ describe('JobDatabase.hasBeenProcessed', () => {
       [daysAgo(2)]: { ...emptyDay(), failed: [record('mixed', 'failed')] },
     });
     expect(database.hasBeenProcessed('mixed')).toBe(false);
+  });
+});
+
+describe('JobDatabase.hasBeenProcessed — skipped 冷卻期的 14 天邊界', () => {
+  let directory: string;
+  let databasePath: string;
+
+  beforeEach(() => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autojob-db-ttl-'));
+    databasePath = path.join(directory, 'applyRecord.jsonl');
+    // 日期字串會被當成 UTC 午夜計算；不固定時間的話，在 UTC+8 凌晨 0–8 點
+    // 「14 天前」只算得出 13 天，結果會隨執行時刻改變。
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  function seedSkipped(jobId: string, date: string): JobDatabase {
+    fs.writeFileSync(databasePath, `${JSON.stringify({ ...record(jobId, 'skipped'), date })}\n`, 'utf8');
+    return new JobDatabase(databasePath);
+  }
+
+  it('剛好滿 14 天的 skipped 已過期，可重新評估', () => {
+    vi.setSystemTime(new Date('2026-10-20T00:00:00.000Z'));
+    expect(seedSkipped('exactly-14-days', '2026-10-06').hasBeenProcessed('exactly-14-days')).toBe(false);
+  });
+
+  it('差 1 毫秒才滿 14 天的 skipped 仍在冷卻期內', () => {
+    vi.setSystemTime(new Date('2026-10-19T23:59:59.999Z'));
+    expect(seedSkipped('almost-14-days', '2026-10-06').hasBeenProcessed('almost-14-days')).toBe(true);
   });
 });
 

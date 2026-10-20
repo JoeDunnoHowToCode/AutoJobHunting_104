@@ -30,7 +30,7 @@ describe('單筆 104 preflight 安全邊界', () => {
 
   it('package script 必須強制可見模式並要求 --job-id', () => {
     expect(packageJson).toContain(
-      '"preflight-104:review": "AUTOJOB_HEADLESS=false ts-node src/preflight-104.ts --job-id"',
+      '"preflight-104:review": "cross-env AUTOJOB_HEADLESS=false ts-node src/preflight-104.ts --job-id"',
     );
   });
 });

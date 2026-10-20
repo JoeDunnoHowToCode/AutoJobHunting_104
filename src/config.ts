@@ -89,10 +89,10 @@ export const config: Config = {
   userDataDir: path.resolve(rootDir, '.chrome-profile'),
   dbPath: path.resolve(rootDir, 'applyRecord.jsonl'),
   applyLimitPerRun: settings.applyLimitPerRun ?? 10,
-  // Intended for one-off, visible manual validation without modifying a
-  // user's ignored settings.json. This does not attempt to alter browser
-  // fingerprinting or bypass platform restrictions.
-  headless: environmentHeadless ?? settings.headless ?? true,
+  // Visible by default: 104 answers the JD page with HTTP 403 in headless
+  // mode, so a headless default made a plain `npm start` fail on its first job.
+  // AUTOJOB_HEADLESS / settings.headless remain for local diagnostics only.
+  headless: environmentHeadless ?? settings.headless ?? false,
   browserChannel: resolveBrowserChannel(process.env.AUTOJOB_BROWSER_CHANNEL),
   blacklistKeywords: settings.blacklistKeywords || [],
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',

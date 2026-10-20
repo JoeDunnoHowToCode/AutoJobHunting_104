@@ -21,7 +21,7 @@ import { RateLimitCircuit } from './rate-limit-circuit';
 import { TransientLog, TransientStage } from './transient-log';
 import { ProgressWatchdog } from './watchdog';
 import { decideRunGate } from './run-gate';
-import { buildRunSummary, RunSummaryStats } from './run-summary';
+import { buildRunSummary, escapeHtml, RunSummaryStats } from './run-summary';
 import { logEvent } from './events';
 
 /**
@@ -260,7 +260,9 @@ export async function main(runMode: RunMode = resolveRunMode()) {
     console.error(`[重大錯誤] ${platform.platformName}：${reason} 已停止未開始的工作。`);
     if (!isDryRun && !stopNoticeSent) {
       stopNoticeSent = true;
-      await sendTelegramMessage(`🚨 <b>[自動投遞系統中途終止]</b>\n處理「${job?.title || '搜尋階段'}」時發現：${reason}`);
+      // Both values come from the page or an error message. Unescaped, a stray
+      // `<` makes Telegram reject the whole message and the alert is lost.
+      await sendTelegramMessage(`🚨 <b>[自動投遞系統中途終止]</b>\n處理「${escapeHtml(job?.title || '搜尋階段')}」時發現：${escapeHtml(reason)}`);
     }
   };
 

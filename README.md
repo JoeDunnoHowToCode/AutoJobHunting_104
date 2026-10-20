@@ -16,7 +16,7 @@
 * **雙軌即時回報系統**：
     * 投遞進度與 AI 評估分數即時推播至 **Telegram**。
     * 歷史紀錄完整歸檔至 **Notion Database**。
-* **智慧持久化去重 (14天過期機制)**：`applyRecord.json` 確保已投遞職缺不再重複投遞。因門檻未達略過 (`skipped`) 的職缺，14 天後自動解鎖重新評估。
+* **智慧持久化去重 (14天過期機制)**：`applyRecord.jsonl`（每筆一行、只追加不覆寫）確保已投遞職缺不再重複投遞。因門檻未達略過 (`skipped`) 的職缺，14 天後自動解鎖重新評估。
 * **失敗分流**：只有「已應徵」「職缺已關閉」這類確定結果才寫入紀錄。429 額度耗盡、網路瞬斷、送出後無法確認等暫時性失敗一律**不寫入**，只記到 `logs/transient.jsonl`，下次執行會重新評估——避免一次配額耗盡就永久失去一批職缺。
 * **以平台狀態確認投遞結果**：送出後若成功提示未出現，會重新讀取 104 應徵按鈕的狀態文字（「近期已應徵」等）來確認，而不是靠逾時猜測；點擊前也會先讀一次，避免對已應徵職缺重複送出。
 * **每輪必發摘要**：不論有無投遞都會推播 Telegram（含「投遞 0 筆」），並在 Session 失效時明確告警且以非零 exit code 結束——排程執行時的靜默失敗是最貴的失敗。
@@ -46,7 +46,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 
 # Telegram 通知 Bot Token (由 @BotFather 取得)
 TELEGRAM_BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
-# 請先發送訊息給您的 Bot，系統啟動時會自動抓取 Chat ID，或者您也可以手動填寫
+# 必填（若要啟用 Telegram）。留空時系統會列出私訊過 Bot 的 Chat ID 供您確認，但不會自動填入
 TELEGRAM_CHAT_ID=
 
 # Notion 紀錄整合
@@ -54,8 +54,8 @@ NOTION_API_TOKEN=YOUR_NOTION_INTEGRATION_TOKEN
 NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
 ```
 > 💡 **小貼士（可選功能）**：
-> - **Telegram 與 Notion 為可選服務**：若您暫時不需要推播或 Notion 歸檔，只需在 `.env` 中將其留空即可。系統會自動切換至靜默模式，所有投遞紀錄皆會完整儲存於本地 `applyRecord.json`。
-> - `TELEGRAM_CHAT_ID` 您可以留空。系統啟動時，只要您先傳送隨便一句話給您的 Telegram 機器人，系統就會自動捕捉您的 Chat ID 並寫回 `.env` 永久記住！
+> - **Telegram 與 Notion 為可選服務**：若您暫時不需要推播或 Notion 歸檔，只需在 `.env` 中將其留空即可。系統會自動切換至靜默模式，所有投遞紀錄皆會完整儲存於本地 `applyRecord.jsonl`。
+> - **`TELEGRAM_CHAT_ID` 需手動填寫**：先私訊您的 Bot 任意一句話，再執行一次程式；若 `TELEGRAM_CHAT_ID` 留空，終端機會列出最近私訊過 Bot 的對話（僅限私人對話，不含群組）。請確認哪一個是您本人，再填入 `.env`。系統不會自動採用或寫回，因為「最後一個傳訊息給 Bot 的人」不一定是您，自動採用可能把投遞紀錄送給別人。
 
 ### 第二步：調整運作參數 (`settings.json`)
 這裡存放與隱私無關的一般設定，您可以直接修改此檔案（您可以參考 `settings_example.json`）：
@@ -64,7 +64,7 @@ NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
   "aiProvider": "gemini",          // 可選: "gemini" | "openai" | "openrouter" | "ollama"
   "aiModel": "gemini-flash-lite-latest", // 單一通用模型名稱 (例: gemini-flash-lite-latest, gpt-4o-mini, anthropic/claude-3.5-sonnet, 可以到API介面查看模型名稱)
   "scoreThreshold": 65,            // 契合度大於等於此分數才會自動投遞
-  "applyLimitPerRun": 30,          // 單次腳本執行的最大投遞數量上限
+  "applyLimitPerRun": 30,          // 單次腳本執行的最大投遞數量上限（未設定時預設 10）
   "blacklistKeywords": ["保險", "博弈"],  // 遇到這些關鍵字直接略過不看
   
   // 地點篩選 (可複選)，若不限制請填 []
@@ -112,7 +112,7 @@ NOTION_DATABASE_ID=YOUR_NOTION_DATABASE_ID
    系統會測試當前 `settings.json` 指定的 AI Provider／模型之連線、契合度評估與自薦信生成。此為線上測試，會將履歷摘要傳送給該 LLM 服務，請只在您同意該資料處理時執行。
 
 2. **104 一律使用可見的正式 Chrome**：
-   104 的 JD 在背景模式會回傳 HTTP 403，因此搜尋、JD 與應徵流程會固定啟動本機已安裝的 Google Chrome 並保持可見。這是平台相容性限制，不使用 stealth、假 User-Agent 或規避機制；請勿將它改回背景模式。
+   104 的 JD 在背景模式會回傳 HTTP 403，因此搜尋、JD 與應徵流程預設啟動本機已安裝的 Google Chrome 並保持可見（`headless` 預設為 `false`）。這是平台相容性限制；程式使用 Chrome 原本的 User-Agent 與自動化標記，不偽裝 User-Agent、不隱藏 `navigator.webdriver`，也不使用其他 stealth 或規避機制。請勿在 `settings.json` 或 `AUTOJOB_HEADLESS` 將它改回背景模式；排程於無桌面的 VM 時，請在 Xvfb 等虛擬顯示器中以可見模式執行。
 
 3. **登入憑證與表單存取是兩件事**：
    `auth_state.json` 只是一份本機登入狀態快照；後台驗證成功不等同每個 104 頁面都會允許自動化 Context 存取。重新手動登入後務必先通過單筆 `preflight-104:review`；若收到 403／驗證／限流，停止流程並以一般手動瀏覽器處理，不要反覆重試或採用 stealth、代理、假 User-Agent 等規避方法。
@@ -140,7 +140,7 @@ npm run dry-run
 
 * dry-run 呼叫的是獨立的 `preflightApplication(...)`，不會呼叫正式的 `applyToJob(...)`。
 * 不填入自薦信、不勾選同意／偏好選項、不點擊最終送出按鈕。
-* 不寫入 `applyRecord.json`、Notion 或 Telegram；資料庫以唯讀方式開啟，程式層也拒絕任何寫入。
+* 不寫入 `applyRecord.jsonl`、Notion 或 Telegram；資料庫以唯讀方式開啟，程式層也拒絕任何寫入。
 * 搜尋或應徵頁遇到登入失效、驗證頁、429／403 或其他平台限制時立即停止，不嘗試規避或重試。
 * JD、搜尋或應徵頁遇到 HTTP 403 時都會在第一筆停止；不會把限制頁當 JD 傳給 LLM，也不會繼續掃描其他職缺。
 
@@ -152,7 +152,7 @@ npm run dry-run
 npm run preflight-104:review -- 8kbs5
 ```
 
-它要求明確指定一個 job ID，只會驗證保存的 Session 並開啟該職缺的送出前表單。它不搜尋、不讀取履歷、不呼叫 LLM、不寫入 `applyRecord.json`、Notion 或 Telegram，也不填寫、勾選或送出；執行時停在表單供人工檢查，按 Enter 關閉。
+它要求明確指定一個 job ID，只會驗證保存的 Session 並開啟該職缺的送出前表單。它不搜尋、不讀取履歷、不呼叫 LLM、不寫入 `applyRecord.jsonl`、Notion 或 Telegram，也不填寫、勾選或送出；執行時停在表單供人工檢查，按 Enter 關閉。
 
 ### 104 連線診斷（唯讀）
 
@@ -174,7 +174,7 @@ npm run diagnose-104:job -- 8x8yl
 
 ### 1. 離線單元測試 (Unit Tests - 快速且無需 API / 網路)
 
-以 [vitest](https://vitest.dev/) 執行，一條指令跑完全部（約 0.5 秒）：
+以 [vitest](https://vitest.dev/) 執行，一條指令跑完全部（約數秒）：
 
 ```bash
 npm test              # 全部離線測試
@@ -196,15 +196,26 @@ npm test -- tests/db.spec.ts   # 只跑單一檔案
 | `tests/application-action.spec.ts` | **應徵分流與唯讀隔離**：`--dry-run` 與 `live` 的 API 邊界隔離，確保 dry-run 絕不呼叫正式送出方法且不寫入 DB。 |
 | `tests/session-state.spec.ts` | **Session 快照與 Cookie 最小化**：僅保存 104 官方主網域與登入子網域之憑證，嚴格過濾第三方追蹤與偽冒網域。 |
 | `tests/preflight-104.spec.ts` | **單筆 Preflight 安全邊界**：表單預檢必須傳入明確 Job ID，且全程不讀取履歷、不呼叫 LLM、不寫入 DB。 |
-| `tests/platform104.spec.ts` | **104 導覽分類與 Context 隔離**：403 / 429 / 401 / 5xx 的 fail-closed 分類，以及應徵走 Persistent Context、搜尋走 Unauth Context 的結構不變式。 |
+| `tests/platform104.spec.ts` | **104 導覽分類與 Context 隔離**：403 / 429 / 401 / 5xx 的 fail-closed 分類，以及應徵走 Persistent Context、搜尋走 Unauth Context 的結構不變式；瀏覽器啟動不得偽裝 User-Agent 或隱藏自動化特徵。 |
+| `tests/db-jsonl.spec.ts` | **JSONL 儲存格式**：`addRecord` 只追加一行不重寫整檔、每行可獨立解析、`applyId` 遞增不重複、舊版 `applyRecord.json` 一次性遷移。 |
+| `tests/db-resilience.spec.ts` | **崩潰復原**：寫到一半被中斷的最後一行會被修補、續寫後崩潰前後紀錄皆保留、損毀行不會讓整個紀錄檔無法載入、唯讀模式不修改檔案。 |
+| `tests/transient-budget.spec.ts` | **跨輪重試預算**：同一職缺的暫時性失敗跨輪累計，達上限後不再重試；成功投遞後清除計數，損壞行不影響載入。 |
+| `tests/rate-limit-circuit.spec.ts` | **429 熔斷**：連續 5 次速率限制才觸發、辨識巢狀 JSON 裡的 429、一次成功即歸零、非 429 錯誤不計入也不重置。 |
+| `tests/apply-queue-priority.spec.ts` | **投遞優先序**：高分職缺先投遞、加上優先序後仍嚴格一次一筆。 |
+| `tests/events.spec.ts` | **結構化事件日誌**：`[EVENT]` 前綴、`key=value` 欄位、空白與引號轉義、維持單行，方便 Cloud Logging 篩選。 |
+| `tests/cover-letter-lint.spec.ts` | **自薦信檢查**：禁用詞全部列出且與 prompt 的負面詞彙表一致、字數過短標記。 |
+| `tests/cover-letter-budget.spec.ts` | **自薦信字數上限**：同時滿足表單 `maxlength`（UTF-16）與 prompt 的中文字數預算，以較嚴格者為準；真實自薦信回歸測試需本機資料，否則略過。 |
+| `tests/text-utils.spec.ts` | **文字工具**：中日韓字數計算、在句末標點處裁切。 |
+| `tests/checkbox-details.spec.ts` | **表單勾選項解析**：從 `for`、包裹式 label、`aria-label` 取得勾選項說明文字。 |
+| `tests/telegram.spec.ts` | **Telegram Chat ID 候選**：略過非訊息更新、排除群組、列出所有私訊對話交由使用者確認。 |
 
-需要真實瀏覽器或付費 API 的測試不在 `npm test` 範圍內，以獨立指令執行：`npm run test:browser`、`npm run test:ai`。
+需要真實瀏覽器或付費 API 的測試不在 `npm test` 範圍內，以獨立指令執行：`npm run test:ai`。
 
 ### 2. 線上冒煙與自薦信生成測試 (Online AI Tests)
 
 * `npm run test-cover-letter`：**自薦信客製化生成測試**（支援兩大模式）。
   * **模式 1（指定職缺）**：`npm run test-cover-letter -- <jobId>`（例如 `npm run test-cover-letter -- 93csc`）
-  * **模式 2（隨機抽樣）**：`npm run test-cover-letter`（自動自 `applyRecord.json` 隨機抽取過往職缺進行即時生成驗證）
+  * **模式 2（隨機抽樣）**：`npm run test-cover-letter`（自動自 `applyRecord.jsonl` 隨機抽取過往職缺進行即時生成驗證）
   * **驗證重點**：即時輸出 AI 評估分數、決策結果 (`apply`/`maybe`/`skip`)、優勢亮點、待補強領域，以及動態切換之自薦信風格（Plan 1 STAR 量化型 vs Plan 2 特質遷移型）與字數統計。
 * `npm run test-ai`：**LLM API 基礎連線測試**（驗證目前設定的模型基本連線與輸出結構）。
 
@@ -218,21 +229,21 @@ npm test -- tests/db.spec.ts   # 只跑單一檔案
 可以將指令加入系統排程（如 `crontab`）中，讓機器人每天定時為您搜尋並投遞新職缺。
 ```bash
 # 每天早上 9 點自動執行一次
-0 9 * * * cd /您的路徑/auto-job-hunter && npm run start >> /tmp/auto-job.log 2>&1
+0 9 * * * cd /您的路徑/AutoJobHunting_104 && npm run start >> /tmp/auto-job.log 2>&1
 ```
 
 ---
 
 ## 🚀 取得專案與安裝
 ```bash
-git clone https://github.com/您的帳號/auto-job-hunter.git
-cd auto-job-hunter
+git clone https://github.com/JoeDunnoHowToCode/AutoJobHunting_104.git
+cd AutoJobHunting_104
 npm install
 ```
 
 ## 🛡️ 平台限制與安全機制
 
-* **.gitignore 嚴密保護**：您的履歷 (`resume.json`)、投遞軌跡 (`applyRecord.json`) 以及密碼金鑰 (`.env`) 皆不會被上傳。
+* **.gitignore 嚴密保護**：您的履歷 (`resume.json`)、投遞軌跡 (`applyRecord.jsonl` 與其備份) 以及密碼金鑰 (`.env`) 皆不會被上傳。
 * **保守序列投遞**：實體投遞固定一次一筆，成功後保留 10–20 秒間隔；這僅是節制系統負載，不保證、也不應被視為規避平台偵測的方法。
 * **應徵前安全驗證**：`npm run dry-run` 用獨立的唯讀表單檢查路徑驗證流程；其不會填寫、勾選或送出，且不會產生本地或外部紀錄。
 * **限制處理**：遇到登入過期、驗證碼、429 或其他存取限制時，應停止操作並重新以平台允許的方式驗證；不嘗試繞過限制。

@@ -1,7 +1,7 @@
 import * as readline from 'readline';
 import * as fs from 'fs';
 import { config } from './config';
-import { launchStealthPersistentContext } from './browser';
+import { launchPersistentBrowserContext } from './browser';
 import { filter104StorageState } from './session-state';
 
 function askQuestion(query: string): Promise<string> {
@@ -21,12 +21,12 @@ async function run() {
   console.log('==================================================');
   console.log('104 人力銀行 自動化登入 Profile 管理器 (Persistent)');
   console.log('==================================================');
-  console.log('這將會開啟帶有特徵抹除的真實 Chrome 瀏覽器視窗。');
+  console.log('這將會開啟真實 Chrome 瀏覽器視窗。');
   console.log('請在瀏覽器中手動完成登入（包含填寫帳密、處理驗證碼等）。');
   console.log('登入後的 Session 將自動持久化儲存於 .chrome-profile 目錄。');
   console.log('==================================================\n');
 
-  const context = await launchStealthPersistentContext(config.userDataDir, { headless: false });
+  const context = await launchPersistentBrowserContext(config.userDataDir, { headless: false });
   const page = context.pages()[0] || await context.newPage();
   
   console.log('正在導向 104 首頁...');
