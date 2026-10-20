@@ -21,7 +21,7 @@ async function run() {
   console.log('==================================================');
   console.log('104 人力銀行 自動化登入 Profile 管理器 (Persistent)');
   console.log('==================================================');
-  console.log('這將會開啟帶有特徵抹除的真實 Chrome 瀏覽器視窗。');
+  console.log('這將會開啟真實 Chrome 瀏覽器視窗。');
   console.log('請在瀏覽器中手動完成登入（包含填寫帳密、處理驗證碼等）。');
   console.log('登入後的 Session 將自動持久化儲存於 .chrome-profile 目錄。');
   console.log('==================================================\n');
