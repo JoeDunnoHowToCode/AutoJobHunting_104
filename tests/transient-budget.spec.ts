@@ -106,6 +106,39 @@ describe('TransientLog — 跨輪重試預算', () => {
 
     expect(new TransientLog(logPath, { maxAttempts: 3 }).hasExhaustedBudget('a')).toBe(false);
   });
+
+  // 429、斷線、104 限流是整輪的問題，跟職缺本身無關；照樣扣額度的話，配額連續
+  // 出問題三天就會把根本沒評估過的職缺排除 14 天。
+  it.each(['rate_limited', 'network', 'platform_limited'])('%s 不扣額度，跨輪重新載入後也一樣', kind => {
+    const first = new TransientLog(logPath);
+    for (let i = 0; i < 3; i++) {
+      first.append(entry('outage-hit', kind));
+      first.append(entry('job-specific'));
+    }
+    expect(first.failureCountFor('outage-hit')).toBe(0);
+    expect(first.failureCountFor('job-specific')).toBe(3);
+
+    const reloaded = new TransientLog(logPath);
+    expect(reloaded.failureCountFor('outage-hit')).toBe(0);
+    expect(reloaded.failureCountFor('job-specific')).toBe(3);
+  });
+
+  // 失敗若永不過期，用完額度的職缺冷卻 14 天回來後，只要再失敗一次就又被排除。
+  it('超過 14 天的失敗不再計入，14 天內的照常計入', () => {
+    const aged = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
+    const recent = new Date(Date.now() - 13 * 24 * 60 * 60 * 1000).toISOString();
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.writeFileSync(
+      logPath,
+      `${JSON.stringify({ ts: aged, ...entry('aged-out') })}\n`.repeat(3) +
+        `${JSON.stringify({ ts: recent, ...entry('recent') })}\n`.repeat(3),
+      'utf8',
+    );
+
+    const log = new TransientLog(logPath, { maxAttempts: 3 });
+    expect(log.failureCountFor('aged-out')).toBe(0);
+    expect(log.hasExhaustedBudget('recent')).toBe(true);
+  });
 });
 
 describe('TransientLog — 保留既有寫入契約', () => {
@@ -155,5 +188,34 @@ describe('TransientLog — 保留既有寫入契約', () => {
     fs.mkdirSync(logPath, { recursive: true });
     const log = new TransientLog(logPath);
     expect(() => log.append(entry('a'))).not.toThrow();
+  });
+
+  // 不修補的話，下一筆會黏在殘行後面一起解析失敗，次數卡住、額度永遠不會觸發。
+  it('最後一行寫到一半：載入時截掉，之後的失敗照常計數', () => {
+    const first = new TransientLog(logPath, { maxAttempts: 3 });
+    first.append(entry('x'));
+    first.append(entry('x'));
+    fs.appendFileSync(logPath, '{"jobId":"x","sta', 'utf8');
+
+    const second = new TransientLog(logPath, { maxAttempts: 3 });
+    second.append(entry('x'));
+
+    const third = new TransientLog(logPath, { maxAttempts: 3 });
+    expect(third.failureCountFor('x')).toBe(3);
+    expect(third.hasExhaustedBudget('x')).toBe(true);
+  });
+
+  it('最後一筆完整只缺換行：補回換行保留該筆，之後的失敗照常計數', () => {
+    const first = new TransientLog(logPath, { maxAttempts: 3 });
+    first.append(entry('x'));
+    first.append(entry('x'));
+    fs.writeFileSync(logPath, fs.readFileSync(logPath, 'utf8').replace(/\n$/, ''), 'utf8');
+
+    const second = new TransientLog(logPath, { maxAttempts: 3 });
+    second.append(entry('x'));
+
+    const third = new TransientLog(logPath, { maxAttempts: 3 });
+    expect(third.failureCountFor('x')).toBe(3);
+    expect(third.hasExhaustedBudget('x')).toBe(true);
   });
 });

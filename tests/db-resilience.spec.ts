@@ -47,6 +47,14 @@ describe('JobDatabase — 崩潰後續寫的生命週期', () => {
     fs.appendFileSync(storePath, '{"jobId":"torn","stat', 'utf8');
   }
 
+  /** Writes two records, then simulates SIGKILL landing on the last one's trailing newline. */
+  function seedWithMissingNewline(): void {
+    const database = new JobDatabase(storePath);
+    database.addRecord(record('before-crash', 'applied'));
+    database.addRecord(record('newline-lost', 'applied'));
+    fs.writeFileSync(storePath, fs.readFileSync(storePath, 'utf8').replace(/\n$/, ''), 'utf8');
+  }
+
   it('截斷後首次載入仍讀得到既有紀錄', () => {
     seedWithTornWrite();
     expect(new JobDatabase(storePath).hasBeenProcessed('before-crash')).toBe(true);
@@ -93,6 +101,27 @@ describe('JobDatabase — 崩潰後續寫的生命週期', () => {
     expect(fourth.hasBeenProcessed('before-crash')).toBe(true);
     expect(fourth.hasBeenProcessed('round-two')).toBe(true);
     expect(fourth.hasBeenProcessed('round-three')).toBe(true);
+  });
+
+  // 斷點落在寫換行那一刻時，最後一筆是完整的資料，不是寫一半的殘行。
+  it('最後一筆完整只缺換行：載入時補回換行，不得刪掉該筆', () => {
+    seedWithMissingNewline();
+    const before = fs.readFileSync(storePath, 'utf8');
+
+    new JobDatabase(storePath);
+    expect(fs.readFileSync(storePath, 'utf8')).toBe(`${before}\n`);
+  });
+
+  // 不補換行的話，下一筆會黏在它後面變成同一行，兩筆一起從去重索引消失。
+  it('最後一筆只缺換行 → 續寫 → 再載入：前後紀錄都必須保留', () => {
+    seedWithMissingNewline();
+    const second = new JobDatabase(storePath);
+    second.addRecord(record('after-crash', 'applied'));
+
+    const third = new JobDatabase(storePath);
+    expect(third.hasBeenProcessed('before-crash')).toBe(true);
+    expect(third.hasBeenProcessed('newline-lost')).toBe(true);
+    expect(third.hasBeenProcessed('after-crash')).toBe(true);
   });
 
   it('唯讀模式遇到殘行不得修改檔案', () => {
@@ -142,6 +171,65 @@ describe('JobDatabase — 中段損壞不得讓整個去重庫失效', () => {
     database.addRecord(record('clean', 'applied'));
     expect(new JobDatabase(storePath).corruptLineCount).toBe(0);
   });
+
+  // 寫到一半的尾行是一般強制中斷的痕跡，載入時會自動修復；算成損壞會讓
+  // 每次正常中斷都觸發 db_corrupt_lines 告警。
+  it('寫到一半的最後一行不計入損壞行數', () => {
+    const database = new JobDatabase(storePath);
+    database.addRecord(record('first', 'applied'));
+    fs.appendFileSync(storePath, '{"jobId":"torn","stat', 'utf8');
+
+    expect(new JobDatabase(storePath).corruptLineCount).toBe(0);
+  });
+
+  // 有結尾換行代表這行寫完之後才損壞，不是中斷的殘行，內容可能還救得回來。
+  it('最後一行完整但內容損壞時，單純讀取不得截掉該行', () => {
+    const database = new JobDatabase(storePath);
+    database.addRecord(record('keep-me', 'applied'));
+    fs.appendFileSync(storePath, '{"jobId":"damaged-but-recoverable","score":9\n', 'utf8');
+    const before = fs.readFileSync(storePath, 'utf8');
+
+    new JobDatabase(storePath);
+    expect(fs.readFileSync(storePath, 'utf8')).toBe(before);
+  });
+});
+
+describe('JobDatabase — 首行損壞不得讓建構子拋錯', () => {
+  let directory: string;
+  let storePath: string;
+
+  beforeEach(() => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autojob-firstline-'));
+    storePath = path.join(directory, 'applyRecord.jsonl');
+  });
+
+  afterEach(() => {
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  // 格式判斷只看第一行；讀不懂就會被當成舊格式整份 JSON.parse 而拋錯，
+  // 之後每一輪都在任何通知送出前結束。
+  it('第一行損壞時改用逐行讀取，其餘紀錄照常去重', () => {
+    const database = new JobDatabase(storePath);
+    database.addRecord(record('after-damage', 'applied'));
+    fs.writeFileSync(storePath, `this is not json\n${fs.readFileSync(storePath, 'utf8')}`, 'utf8');
+
+    let reloaded!: JobDatabase;
+    expect(() => { reloaded = new JobDatabase(storePath); }).not.toThrow();
+    expect(reloaded.hasBeenProcessed('after-damage')).toBe(true);
+  });
+
+  it('檔案開頭帶 UTF-8 BOM 時仍可載入，首筆紀錄也照常去重', () => {
+    const database = new JobDatabase(storePath);
+    database.addRecord(record('first', 'applied'));
+    database.addRecord(record('second', 'applied'));
+    fs.writeFileSync(storePath, `\uFEFF${fs.readFileSync(storePath, 'utf8')}`, 'utf8');
+
+    let reloaded!: JobDatabase;
+    expect(() => { reloaded = new JobDatabase(storePath); }).not.toThrow();
+    expect(reloaded.hasBeenProcessed('first')).toBe(true);
+    expect(reloaded.hasBeenProcessed('second')).toBe(true);
+  });
 });
 
 describe('JobDatabase — 舊格式路徑不得直接拋錯', () => {
@@ -172,5 +260,31 @@ describe('JobDatabase — 舊格式路徑不得直接拋錯', () => {
     let database!: JobDatabase;
     expect(() => { database = new JobDatabase(legacyPath); }).not.toThrow();
     expect(database.hasBeenProcessed('legacy-applied')).toBe(true);
+  });
+
+  // 舊檔是單一 JSON，只要 append 一行進去就再也無法解析，舊紀錄全部失去去重。
+  it('傳入舊 applyRecord.json 時，新紀錄寫進同目錄的 applyRecord.jsonl，舊檔不變', () => {
+    const legacyPath = path.join(directory, 'applyRecord.json');
+    fs.writeFileSync(
+      legacyPath,
+      JSON.stringify(
+        { '2026-08-01': { applied: [record('legacy-applied', 'applied')], skipped: [], failed: [] } },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    const legacyBefore = fs.readFileSync(legacyPath, 'utf8');
+
+    new JobDatabase(legacyPath).addRecord(record('new-record', 'applied'));
+
+    expect(fs.readFileSync(legacyPath, 'utf8')).toBe(legacyBefore);
+    const written = fs.readFileSync(path.join(directory, 'applyRecord.jsonl'), 'utf8')
+      .split('\n').filter(Boolean).map(line => JSON.parse(line).jobId);
+    expect(written).toEqual(['new-record']);
+
+    const reloaded = new JobDatabase(legacyPath);
+    expect(reloaded.hasBeenProcessed('legacy-applied')).toBe(true);
+    expect(reloaded.hasBeenProcessed('new-record')).toBe(true);
   });
 });
