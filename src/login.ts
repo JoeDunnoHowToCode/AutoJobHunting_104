@@ -1,7 +1,7 @@
 import * as readline from 'readline';
 import * as fs from 'fs';
 import { config } from './config';
-import { launchStealthPersistentContext } from './browser';
+import { launchPersistentBrowserContext } from './browser';
 import { filter104StorageState } from './session-state';
 
 function askQuestion(query: string): Promise<string> {
@@ -26,7 +26,7 @@ async function run() {
   console.log('登入後的 Session 將自動持久化儲存於 .chrome-profile 目錄。');
   console.log('==================================================\n');
 
-  const context = await launchStealthPersistentContext(config.userDataDir, { headless: false });
+  const context = await launchPersistentBrowserContext(config.userDataDir, { headless: false });
   const page = context.pages()[0] || await context.newPage();
   
   console.log('正在導向 104 首頁...');

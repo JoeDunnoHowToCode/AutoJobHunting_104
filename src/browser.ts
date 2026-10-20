@@ -43,10 +43,36 @@ export function cleanSingletonLocks(userDataDir: string): void {
 }
 
 /**
- * Launches a hardened, persistent Chrome browser context with anti-bot detection evasions.
- * Uses native Playwright capabilities without fragile 3rd party plugins.
+ * Launch options shared by both 104 contexts.
+ *
+ * Deliberately plain: Playwright's own defaults plus locale, timezone and window
+ * size. No spoofed User-Agent, no `navigator.webdriver` override and no flags
+ * that hide automation. If 104 refuses this browser, the run stops (see
+ * classify104Navigation) — it must not be "fixed" by disguising the browser.
  */
-export async function launchStealthPersistentContext(
+function buildLaunchOptions(headless: boolean, diskCacheBytes: number) {
+  // Headless Chrome is Playwright's own `--headless=new` mode; no extra flag needed.
+  return {
+    headless,
+    viewport: { width: 1440, height: 900 },
+    locale: 'zh-TW',
+    timezoneId: 'Asia/Taipei',
+    args: [
+      '--disable-dev-shm-usage',
+      `--disk-cache-size=${diskCacheBytes}`,
+      '--disable-gpu-shader-disk-cache',
+      '--disable-component-update',
+      '--window-size=1440,900',
+      '--lang=zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+    ],
+    chromiumSandbox: true,
+  };
+}
+
+/**
+ * Launches a persistent Chrome context that keeps the 104 login profile.
+ */
+export async function launchPersistentBrowserContext(
   customProfilePath?: string,
   options: { headless?: boolean } = {}
 ): Promise<BrowserContext> {
@@ -56,32 +82,8 @@ export async function launchStealthPersistentContext(
   // 1. Clean stale singleton locks
   cleanSingletonLocks(userDataDir);
 
-  const baseArgs = [
-    '--test-type',
-    '--disable-blink-features=AutomationControlled',
-    '--disable-dev-shm-usage',
-    '--disk-cache-size=104857600', // 100MB cache limit
-    '--media-cache-size=52428800', // 50MB media cache limit
-    '--disable-gpu-shader-disk-cache',
-    '--disable-component-update',
-    '--window-size=1440,900',
-    '--lang=zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-  ];
-
-  if (headless) {
-    baseArgs.push('--headless=new');
-  }
-
-  const launchOptions: any = {
-    headless,
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    viewport: { width: 1440, height: 900 },
-    locale: 'zh-TW',
-    timezoneId: 'Asia/Taipei',
-    args: baseArgs,
-    chromiumSandbox: true,
-    ignoreDefaultArgs: ['--enable-automation', '--no-sandbox'],
-  };
+  const launchOptions = buildLaunchOptions(headless, 104857600); // 100MB cache limit
+  launchOptions.args.push('--media-cache-size=52428800'); // 50MB media cache limit
 
   let context: BrowserContext;
   const preferredChannel = config.browserChannel || 'chrome';
@@ -98,22 +100,7 @@ export async function launchStealthPersistentContext(
     console.log(`[Browser] Persistent Context | Channel: bundled chromium | Headless: ${headless}`);
   }
 
-  // 2. Erase automation fingerprints via init script on every page
-  await context.addInitScript(() => {
-    try {
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined,
-      });
-      if (navigator.userAgent.includes('HeadlessChrome')) {
-        const cleanUa = navigator.userAgent.replace('HeadlessChrome', 'Chrome');
-        Object.defineProperty(navigator, 'userAgent', {
-          get: () => cleanUa,
-        });
-      }
-    } catch {}
-  });
-
-  // 3. Graceful shutdown handler
+  // 2. Graceful shutdown handler
   const cleanup = async () => {
     try {
       await context.close();
@@ -127,39 +114,15 @@ export async function launchStealthPersistentContext(
 
 /**
  * Launches an ephemeral, unauthenticated BrowserContext for public search and scraping.
- * Uses a clean temporary profile to prevent 104 WAF 403 blocks in headless mode.
+ * Uses a clean temporary profile so session cookies never reach the public pages.
  */
-export async function launchStealthContext(
+export async function launchEphemeralBrowserContext(
   options: { headless?: boolean } = {}
 ): Promise<{ context: BrowserContext; close: () => Promise<void> }> {
   const headless = options.headless ?? config.headless;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'autojob-unauth-'));
 
-  const baseArgs = [
-    '--test-type',
-    '--disable-blink-features=AutomationControlled',
-    '--disable-dev-shm-usage',
-    '--disk-cache-size=52428800',
-    '--disable-gpu-shader-disk-cache',
-    '--disable-component-update',
-    '--window-size=1440,900',
-    '--lang=zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-  ];
-
-  if (headless) {
-    baseArgs.push('--headless=new');
-  }
-
-  const launchOptions: any = {
-    headless,
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    viewport: { width: 1440, height: 900 },
-    locale: 'zh-TW',
-    timezoneId: 'Asia/Taipei',
-    args: baseArgs,
-    chromiumSandbox: true,
-    ignoreDefaultArgs: ['--enable-automation', '--no-sandbox'],
-  };
+  const launchOptions = buildLaunchOptions(headless, 52428800);
 
   const preferredChannel = config.browserChannel || 'chrome';
   let context: BrowserContext;
@@ -174,20 +137,6 @@ export async function launchStealthContext(
     context = await chromium.launchPersistentContext(tempDir, launchOptions);
     console.log(`[Browser] Unauth Context | Channel: bundled chromium | Headless: ${headless}`);
   }
-
-  await context.addInitScript(() => {
-    try {
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined,
-      });
-      if (navigator.userAgent.includes('HeadlessChrome')) {
-        const cleanUa = navigator.userAgent.replace('HeadlessChrome', 'Chrome');
-        Object.defineProperty(navigator, 'userAgent', {
-          get: () => cleanUa,
-        });
-      }
-    } catch {}
-  });
 
   return {
     context,

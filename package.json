@@ -15,14 +15,10 @@
     "inspect-apply": "AUTOJOB_HEADLESS=false ts-node src/inspect-application.ts",
     "login": "ts-node src/login.ts",
     "test": "vitest run",
-    "test:browser": "ts-node tests/test-stealth.spec.ts",
     "test:ai": "npm run test-ai && npm run test-cover-letter",
     "test-ai": "ts-node tests/ai-smoke.ts",
     "test-cover-letter": "ts-node tests/cover-letter-test.ts",
-    "test:watch": "vitest",
-    "probe:multi-llm": "ts-node scripts/test-multi-llm.ts",
-    "probe:clear-filters": "AUTOJOB_HEADLESS=false ts-node scripts/test-clear-filters.ts",
-    "probe:apply-button": "AUTOJOB_HEADLESS=false ts-node scripts/test-apply-button.ts"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@google/genai": "latest",

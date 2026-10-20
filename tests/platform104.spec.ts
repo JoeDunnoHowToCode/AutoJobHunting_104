@@ -17,6 +17,10 @@ const baseSource = fs.readFileSync(
   path.resolve(__dirname, '..', 'src', 'platforms', 'base.ts'),
   'utf8',
 );
+const browserSource = fs.readFileSync(
+  path.resolve(__dirname, '..', 'src', 'browser.ts'),
+  'utf8',
+);
 
 describe('classify104Navigation', () => {
   it('401 必須分類為 Session 問題', () => {
@@ -76,8 +80,15 @@ describe('平台原始碼安全不變式', () => {
     expect(platformSource).not.toContain("stage === 'job' && status === 403 && diagnostic");
   });
 
-  it('104 必須採用防偵測 Persistent Context 啟動機制', () => {
-    expect(baseSource).toContain('launchStealthPersistentContext');
+  it('104 應徵流程必須使用 Persistent Context 啟動機制', () => {
+    expect(baseSource).toContain('launchPersistentBrowserContext');
+  });
+
+  it('瀏覽器啟動不得偽裝 User-Agent 或隱藏自動化特徵', () => {
+    expect(browserSource).not.toMatch(/userAgent\s*:/);
+    expect(browserSource).not.toContain("defineProperty(navigator");
+    expect(browserSource).not.toContain('AutomationControlled');
+    expect(browserSource).not.toContain('--enable-automation');
   });
 
   it('必須維護 persistentContext 並提供存取方法', () => {

@@ -1,7 +1,7 @@
 import { BrowserContext, Page } from 'playwright';
 import * as fs from 'fs';
 import { config } from '../config';
-import { launchStealthContext, launchStealthPersistentContext } from '../browser';
+import { launchEphemeralBrowserContext, launchPersistentBrowserContext } from '../browser';
 import { filter104StorageState } from '../session-state';
 
 export interface ScrapedJob {
@@ -51,7 +51,7 @@ export interface ApplicationPreflightOptions {
 
 export abstract class JobPlatform {
   /**
-   * Persistent BrowserContext with stealth mitigations and saved login session.
+   * Persistent BrowserContext with the saved login session.
    * Used for authenticated operations (Apply form submission).
    */
   protected persistentContext: BrowserContext | null = null;
@@ -66,7 +66,7 @@ export abstract class JobPlatform {
   public abstract readonly platformName: string;
 
   /**
-   * Initializes or returns the shared stealth persistent context for authenticated actions.
+   * Initializes or returns the shared persistent context for authenticated actions.
    */
   public async getPersistentContext(): Promise<BrowserContext> {
     if (this.persistentContext) {
@@ -78,7 +78,7 @@ export abstract class JobPlatform {
       }
     }
 
-    this.persistentContext = await launchStealthPersistentContext(config.userDataDir, {
+    this.persistentContext = await launchPersistentBrowserContext(config.userDataDir, {
       headless: config.headless,
     });
 
@@ -118,7 +118,7 @@ export abstract class JobPlatform {
       }
     }
 
-    const { context, close } = await launchStealthContext({
+    const { context, close } = await launchEphemeralBrowserContext({
       headless: config.headless,
     });
     this.unauthContext = context;
